@@ -94,12 +94,15 @@ Public repository: https://github.com/tobl-ai/hermes-for-teams
 Replace `YOUR_PROFILE` with an existing **test profile** on the target installation:
 
 ```sh
-hermes --profile YOUR_PROFILE plugins install tobl-ai/hermes-for-teams --ref v0.1.0 --enable
+hermes --profile YOUR_PROFILE plugins install tobl-ai/hermes-for-teams --enable
 hermes --profile YOUR_PROFILE plugins list
 hermes --profile YOUR_PROFILE teams --help
 ```
 
-This is the **v0.1.0 experimental prerelease**. Installing does not start workers,
+This is the **v0.1.0 experimental prerelease**. The command above follows the current
+repository default branch. For a pinned install, append `--ref` with a full
+40-character commit SHA from the release notes; Hermes does not accept a tag name
+in that option. Installing does not start workers,
 copy authentication, change models or route ordinary conversations into the queue.
 Hermes may ask for approval for this non-catalog source and its package metadata.
 Configure the target profile as below before `teams status` / `teams doctor`.
