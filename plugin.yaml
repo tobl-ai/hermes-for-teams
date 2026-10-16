@@ -1,0 +1,33 @@
+name: hermes-for-teams
+version: 0.1.0
+description: "Explicit durable team queue with reserved interactive/background lanes; no core fork"
+author: Tobl.ai
+license: MIT
+kind: standalone
+platforms:
+  - macos
+  - linux
+provides_tools:
+  - teams_submit
+  - teams_status
+  - teams_cancel
+  - teams_workflow
+config_schema:
+  enabled:
+    type: bool
+    default: false
+  trusted_operator_tools:
+    type: bool
+    default: false
+    description: "Only opt in for a trusted operator-only profile; not a multi-user authorization boundary"
+  tenant:
+    type: str
+  profile:
+    type: str
+  queue_path:
+    type: str
+  allow_cli_workers:
+    type: bool
+    default: false
+  hermes_executable:
+    type: str
