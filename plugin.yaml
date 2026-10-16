@@ -31,3 +31,9 @@ config_schema:
     default: false
   hermes_executable:
     type: str
+  existing_owner_control_home:
+    type: str
+    description: "Optional operator-only absolute path of an already-ready multiplex owner; never starts a daemon"
+  existing_owner_profile_home:
+    type: str
+    description: "Exact canonical profile home that the existing owner must authenticate and serve"

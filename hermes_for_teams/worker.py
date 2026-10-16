@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -20,6 +21,13 @@ def hermes_command(settings, job):
     executable = Path(settings.get('hermes_executable', ''))
     if not executable.is_absolute() or not executable.is_file() or not os.access(executable, os.X_OK):
         raise ValueError('Pin an absolute executable hermes_executable')
+    from .gateway_query import owner_paths
+    homes = owner_paths(settings)
+    if homes is not None:
+        control_home, profile_home = homes
+        return [sys.executable, str(Path(__file__).with_name('gateway_query.py')),
+                '--control-home', str(control_home), '--profile-home', str(profile_home),
+                '--cwd', str(Path.cwd()), '--prompt', job['payload']]
     # No arbitrary argv, provider replacement, auth copy, approvals bypass, or local fallback.
     return [str(executable), '--profile', profile, 'chat', '-Q', '--format', 'stream-json', '-q', job['payload']]
 

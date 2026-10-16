@@ -22,7 +22,8 @@ def register(ctx):
     def read_settings():
         return {key: ctx.get_config(key, default) for key, default in (
             ('enabled', False), ('trusted_operator_tools', False), ('tenant', None), ('profile', None), ('queue_path', None),
-            ('allow_cli_workers', False), ('hermes_executable', None))}
+            ('allow_cli_workers', False), ('hermes_executable', None),
+            ('existing_owner_control_home', None), ('existing_owner_profile_home', None))}
 
     ctx.register_cli_command(name='teams', help='Explicit durable team queue', setup_fn=setup, handler_fn=cli_handler)
     def tools_allowed():
