@@ -62,7 +62,7 @@ async def query(control_home, profile_home, prompt, cwd):
         emitter = StreamJsonEmitter(model=str((snapshot.get('info') or {}).get('model') or ''),
                                     session_id=snapshot['stored_session_id'])
         view = GatewayChatView(client, snapshot, quiet=True, emitter=emitter)
-        view.unattended = True  # same noninteractive finite behavior as official chat -q
+        view.unattended = False  # Preserve chat -q approval policy; never imply YOLO.
         return await view.run(prompt, oneshot=True)
 
 

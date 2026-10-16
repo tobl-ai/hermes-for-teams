@@ -70,11 +70,11 @@ def main():
         status = run(command + ['teams', 'status'], env)
         assert '"jobs": 1' in status
         manifest = source / 'plugin.yaml'
-        manifest.write_text(manifest.read_text().replace('version: 0.1.0', 'version: 0.1.1'))
+        manifest.write_text(manifest.read_text().replace('version: 0.2.0', 'version: 0.2.1'))
         run(['git', '-C', str(source), 'add', '.'])
         run(['git', '-C', str(source), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Update fixture'])
         run(command + ['plugins', 'update', 'hermes-for-teams'], env)
-        assert 'version: 0.1.1' in (installed / 'plugin.yaml').read_text()
+        assert 'version: 0.2.1' in (installed / 'plugin.yaml').read_text()
         run(command + ['plugins', 'disable', 'hermes-for-teams'], env)
         listing = run(command + ['plugins', 'list', '--plain', '--no-bundled'], env)
         assert listing.strip().startswith('disabled') and 'hermes-for-teams' in listing

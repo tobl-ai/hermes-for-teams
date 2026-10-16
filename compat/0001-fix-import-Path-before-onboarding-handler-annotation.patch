@@ -1,0 +1,31 @@
+From b862b3ed3b1f6fb3505a6175537dfe95b235bc82 Mon Sep 17 00:00:00 2001
+From: Will <will@Willui-Macmini.local>
+Date: Fri, 16 Oct 2026 15:36:42 +0900
+Subject: [PATCH 1/2] fix: import Path before onboarding handler annotations
+
+---
+ tests/gateway/test_onboarding_import_regression.py | 4 ++++
+ tui_gateway/methods_onboarding.py                  | 1 +
+ 2 files changed, 5 insertions(+)
+ create mode 100644 tests/gateway/test_onboarding_import_regression.py
+
+diff --git a/tests/gateway/test_onboarding_import_regression.py b/tests/gateway/test_onboarding_import_regression.py
+new file mode 100644
+index 0000000000..0865068ac2
+--- /dev/null
++++ b/tests/gateway/test_onboarding_import_regression.py
+@@ -0,0 +1,4 @@
++def test_onboarding_handler_module_can_import_type_annotations():
++    import importlib
++    module = importlib.import_module('tui_gateway.methods_onboarding')
++    assert callable(module._shared_nous_store)
+diff --git a/tui_gateway/methods_onboarding.py b/tui_gateway/methods_onboarding.py
+index e4b0c071b8..910f63a60d 100644
+--- a/tui_gateway/methods_onboarding.py
++++ b/tui_gateway/methods_onboarding.py
+@@ -1,4 +1,5 @@
+ import threading
++from pathlib import Path
+ 
+ from .method_ctx import HandlerRegistry, bind_module
+ 

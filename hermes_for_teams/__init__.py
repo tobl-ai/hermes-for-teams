@@ -1,2 +1,2 @@
-"""Portable Hermes for Teams add-on (no fork or core patch)."""
-__version__ = "0.1.0"
+"""Hermes for Teams. Automatic mode requires the optional native core seam."""
+__version__ = "0.2.0"

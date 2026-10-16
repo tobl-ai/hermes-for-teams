@@ -1,6 +1,8 @@
 name: hermes-for-teams
-version: 0.1.0
-description: "Explicit durable team queue with reserved interactive/background lanes; no core fork"
+version: 0.2.0
+description: "Automatic native-turn scheduling plus explicit queue; automatic mode requires the optional Hermes core seam"
+provides_middleware:
+  - gateway_turn_execution
 author: Tobl.ai
 license: MIT
 kind: standalone
@@ -13,6 +15,20 @@ provides_tools:
   - teams_cancel
   - teams_workflow
 config_schema:
+  automatic_enabled:
+    type: bool
+    default: false
+    description: "Experimental ordinary native-turn scheduling; requires optional gateway_turn_execution core seam"
+  automatic_interactive:
+    type: int
+    default: 2
+  automatic_background:
+    type: int
+    default: 1
+  automatic_heavy_bytes:
+    type: int
+    default: 4096
+    description: "UTF-8 input-size lane heuristic, not runtime prediction; positive integer"
   enabled:
     type: bool
     default: false

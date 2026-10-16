@@ -1,0 +1,417 @@
+From e457d6d756c3132ba4f0440a12d2004717b6630a Mon Sep 17 00:00:00 2001
+From: Will <will@Willui-Macmini.local>
+Date: Fri, 16 Oct 2026 15:36:43 +0900
+Subject: [PATCH 2/2] feat: connect native turns to optional scheduling
+ middleware
+
+---
+ gateway/TURN_SCHEDULING.md            |  45 +++++++
+ gateway/session_finite.py             |   9 +-
+ gateway/session_runtime_workers.py    |   2 +
+ gateway/turn_scheduling.py            | 130 ++++++++++++++++++++
+ hermes_cli/middleware.py              |   1 +
+ tests/gateway/test_turn_scheduling.py | 164 ++++++++++++++++++++++++++
+ 6 files changed, 350 insertions(+), 1 deletion(-)
+ create mode 100644 gateway/TURN_SCHEDULING.md
+ create mode 100644 gateway/turn_scheduling.py
+ create mode 100644 tests/gateway/test_turn_scheduling.py
+
+diff --git a/gateway/TURN_SCHEDULING.md b/gateway/TURN_SCHEDULING.md
+new file mode 100644
+index 0000000000..872b96da9b
+--- /dev/null
++++ b/gateway/TURN_SCHEDULING.md
+@@ -0,0 +1,45 @@
++# Optional gateway whole-turn scheduling seam (proposal, not deployed)
++
++`gateway_turn_execution` is a proposed async native middleware kind. Registration
++uses the existing `PluginContext.register_middleware(kind, callback)` interface.
++No monkeypatch, new transport, auth principal, daemon, task queue or worker is added.
++
++The single call site is `session_finite.execute_finite_admission`, AFTER durable
++claim/preflight and BEFORE native execution. The authority remains the only owner
++of admission, per-session FIFO, unknown fencing, terminal settlement and delivery.
++
++```python
++async def schedule(*, next_call, profile_id, session_id, admission_id, input_bytes, physical_completion):
++    async with my_capacity_policy():
++        return await next_call()
++```
++
++Contract:
++
++- Runs under the owning profile's runtime scope. Native execution subsequently
++  restores its complete original provenance. No event/source/media/DB/runner
++  handles are handed to a plugin. Metadata is scheduling identity, not new authority.
++- The callback must await `next_call()` exactly once. Continuations close when their
++  callback exits and cannot be retained for later admission/replay.
++- Before execution, callback failure fails the claimed admission through the normal
++  authority failure path. This is deliberately NOT the fail-open lifecycle hook chain.
++- After execution starts, core joins the physical native coroutine. Native results
++  and errors dominate callback return values/errors (including lost acknowledgments).
++  Plugins cannot fabricate an alternative result or swallow a native exception.
++- Cancellation is propagated only after the started coroutine has quiesced. No
++  callback exception triggers fallback/re-execution. Long tools can therefore delay
++  cancellation/shutdown; freeing an occupied seat would be unsafe.
++- No callbacks preserves normal native execution. Native safe-worker policy still
++  suppresses plugin middleware. This does not authorize plugins in isolated workers.
++- A plugin must hold its own capacity reservation if native execution is unknown;
++  `ManagedExecutionUnknown` retains its native type and fencing path.
++- Policy admission waiting occurs AFTER claim, so an owner crash can leave an
++  unstarted scheduled turn unknown. No automatic replay is safe in that case.
++
++The implementation accesses native PluginManager callback storage like existing
++execution middleware. This proposed seam has not been accepted upstream and is
++not a promise of a stable API in currently released Hermes.
++
++Tests: `tests/gateway/test_turn_scheduling.py`. Additional add-on integration tests
++are in the separate hermes-for-teams-automatic worktree. No production owner was
++modified/restarted. Deployment requires independent review and owner-aware canary.
+diff --git a/gateway/session_finite.py b/gateway/session_finite.py
+index 7a2a58456b..bc1e49b3b3 100644
+--- a/gateway/session_finite.py
++++ b/gateway/session_finite.py
+@@ -77,4 +77,11 @@ async def execute_finite_admission(authority, ref, row):
+             surface_turn_scope(row['payload'].get('surface_v1')), \
+             display_turn_scope(row['admission_id'], row['payload'].get('display_v1')), \
+             cli_turn_scope(row['admission_id'], row['payload'].get('cli_turn_v1')):
+-        return await execute_admission(authority, ref, row)
++        from gateway.session_ingress import _execution_scope
++        from gateway.turn_scheduling import run_scheduled_turn, scheduling_metadata
++        # Select the owning profile's registered policy; never the transport's
++        # ambient plugin manager. Native execution restores full provenance.
++        with await _execution_scope(authority, None):
++            return await run_scheduled_turn(
++                lambda: execute_admission(authority, ref, row),
++                **scheduling_metadata(ref, row))
+diff --git a/gateway/session_runtime_workers.py b/gateway/session_runtime_workers.py
+index 3631888bab..074a2e56d9 100644
+--- a/gateway/session_runtime_workers.py
++++ b/gateway/session_runtime_workers.py
+@@ -100,6 +100,8 @@ async def tracked_write(authority, write, then=None, *, ordered=False, after=Non
+ def start_turn_worker(runner, worker, agent_holder, run_sync):
+     authority = track_turn_worker(runner, worker, agent_holder)
+     worker.executor_task = asyncio.ensure_future(runner._run_in_executor_with_context(run_sync))
++    from gateway.turn_scheduling import register_physical_completion
++    register_physical_completion(worker.worker_done)
+     if authority is not None:
+         # Normal settlement releases the retained agent promptly. A cancelled asyncio waiter is
+         # not physical completion; leave that entry until worker_done proves the thread exited.
+diff --git a/gateway/turn_scheduling.py b/gateway/turn_scheduling.py
+new file mode 100644
+index 0000000000..7c15a45d8f
+--- /dev/null
++++ b/gateway/turn_scheduling.py
+@@ -0,0 +1,130 @@
++"""Optional async scheduling seam around an ALREADY claimed native turn.
++
++No event snapshots/runner handles exposed; no consumer/reinjection, no fail-open
++retry. All scheduling errors before execution fail the admission normally. Once
++native execution starts it is joined to physical completion, never replayed.
++"""
++import asyncio
++from contextvars import ContextVar
++from types import MappingProxyType
++
++_physical_events: ContextVar[list | None] = ContextVar('gateway_scheduled_physical_events', default=None)
++_physical_join_tasks = set()
++
++
++def register_physical_completion(done_event):
++    """Called at native executor submission, before an asyncio waiter can detach."""
++    events = _physical_events.get()
++    if events is not None:
++        events.append(done_event)
++
++
++def _settle_physical(future, events):
++    if all(event.is_set() for event in events):
++        if not future.done():
++            future.set_result(None)
++        return
++
++    async def wait():
++        while not all(event.is_set() for event in events):
++            await asyncio.sleep(.05)
++        if not future.done():
++            future.set_result(None)
++
++    task = asyncio.create_task(wait())
++    _physical_join_tasks.add(task)
++    task.add_done_callback(_physical_join_tasks.discard)
++
++KIND = 'gateway_turn_execution'
++
++
++async def _join(task):
++    cancelled = False
++    while True:
++        try:
++            result = await asyncio.shield(task)
++            break
++        except asyncio.CancelledError:
++            if task.done() and task.cancelled():
++                raise
++            cancelled = True
++    if cancelled:
++        raise asyncio.CancelledError
++    return result
++
++
++async def run_scheduled_turn(next_call, **metadata):
++    from agent.safe_worker_policy import safe_worker_enabled
++    if safe_worker_enabled():
++        return await next_call()
++    from hermes_cli.plugins import _delivery_manager
++    manager = _delivery_manager()
++    # Same native registration/delivery isolation boundary as execution middleware.
++    callbacks = list(manager._middleware.get(KIND, ()))
++    if not callbacks:
++        return await next_call()
++    physical_completion = asyncio.get_running_loop().create_future()
++    events = []
++    native_started = False
++    metadata = MappingProxyType({**metadata, 'physical_completion': physical_completion})
++
++    async def call_native():
++        nonlocal native_started
++        native_started = True
++        token = _physical_events.set(events)
++        try:
++            return await next_call()
++        finally:
++            _physical_events.reset(token)
++            # A native timeout may settle its coroutine before its executor thread.
++            _settle_physical(physical_completion, events)
++
++    async def call_at(index):
++        if index == len(callbacks):
++            return await call_native()
++        closed = False
++        task = None
++
++        async def once():
++            nonlocal task
++            if closed or task is not None:
++                raise RuntimeError('gateway turn continuation is single-use and admission-scoped')
++            task = asyncio.create_task(call_at(index + 1))
++            return await _join(task)
++
++        error = None
++        try:
++            await callbacks[index](next_call=once, **metadata)
++        except BaseException as exc:
++            error = exc
++        finally:
++            closed = True
++        if task is not None:
++            # Preserve the actual terminal result/error even if policy lost its
++            # acknowledgement. A plugin cannot turn success into a retry or forge
++            # a different reply. Cancellation stays cancellation after quiescence.
++            result = await _join(task)
++            if error is not None and not isinstance(error, Exception):
++                raise error
++            return result
++        if error is not None:
++            raise error
++        raise RuntimeError('gateway scheduling middleware did not execute its continuation')
++
++    try:
++        return await call_at(0)
++    finally:
++        if not native_started:
++            _settle_physical(physical_completion, events)
++
++
++def scheduling_metadata(ref, row):
++    # Coarse size only. No prompt, source identity, media paths or authority handles.
++    payload = row['payload']
++    text = payload.get('text', '')
++    if not isinstance(text, str):
++        import json
++        text = json.dumps(text, ensure_ascii=False)
++    return {'profile_id': ref.profile_id, 'session_id': ref.session_id,
++            'admission_id': row['admission_id'],
++            'input_bytes': len(text.encode('utf-8'))}
+diff --git a/hermes_cli/middleware.py b/hermes_cli/middleware.py
+index 753b6643ab..85963d75b8 100644
+--- a/hermes_cli/middleware.py
++++ b/hermes_cli/middleware.py
+@@ -23,6 +23,7 @@ LLM_EXECUTION_MIDDLEWARE = "llm_execution"
+ 
+ VALID_MIDDLEWARE: set[str] = {
+     TOOL_REQUEST_MIDDLEWARE, TOOL_EXECUTION_MIDDLEWARE, LLM_REQUEST_MIDDLEWARE, LLM_EXECUTION_MIDDLEWARE,
++    "gateway_turn_execution",
+ }
+ 
+ 
+diff --git a/tests/gateway/test_turn_scheduling.py b/tests/gateway/test_turn_scheduling.py
+new file mode 100644
+index 0000000000..9be646c2d9
+--- /dev/null
++++ b/tests/gateway/test_turn_scheduling.py
+@@ -0,0 +1,164 @@
++"""Async whole-turn scheduling contract: never consume/reinject user events."""
++import asyncio
++from types import SimpleNamespace
++
++import pytest
++
++from gateway.turn_scheduling import run_scheduled_turn
++
++
++def test_safe_worker_never_discovers_or_executes_plugins(monkeypatch):
++    async def case():
++        from hermes_cli import plugins
++        import agent.safe_worker_policy as policy
++        monkeypatch.setattr(policy, 'safe_worker_enabled', lambda: True)
++        def forbidden():
++            raise AssertionError('safe worker must not discover plugins')
++        monkeypatch.setattr(plugins, '_delivery_manager', forbidden)
++        async def native():
++            return 'isolated-native'
++        assert await run_scheduled_turn(native) == 'isolated-native'
++    asyncio.run(case())
++
++
++def test_disabled_and_fail_closed(monkeypatch):
++    async def case():
++        from hermes_cli import plugins
++        manager = SimpleNamespace(_middleware={})
++        monkeypatch.setattr(plugins, '_delivery_manager', lambda: manager)
++        calls = []
++        async def native():
++            calls.append(1)
++            return 'original'
++        assert await run_scheduled_turn(native, input_bytes=1) == 'original'
++        async def broken(**kwargs):
++            raise TimeoutError('admission policy failed')
++        manager._middleware['gateway_turn_execution'] = [broken]
++        with pytest.raises(TimeoutError):
++            await run_scheduled_turn(native, input_bytes=1)
++        assert calls == [1]  # no fail-open execution or replay
++    asyncio.run(case())
++
++
++def test_once_only_and_ack_loss(monkeypatch):
++    async def case():
++        from hermes_cli import plugins
++        manager = SimpleNamespace(_middleware={})
++        monkeypatch.setattr(plugins, '_delivery_manager', lambda: manager)
++        calls = []
++        saved = []
++        async def native():
++            calls.append(1)
++            return 'original'
++        async def policy(next_call, **kwargs):
++            saved.append(next_call)
++            assert await next_call() == 'original'
++            with pytest.raises(RuntimeError):
++                await next_call()
++            raise TimeoutError('ack lost after execution')
++        manager._middleware['gateway_turn_execution'] = [policy]
++        assert await run_scheduled_turn(native, input_bytes=1) == 'original'
++        assert calls == [1]
++        with pytest.raises(RuntimeError):
++            await saved[0]()
++        assert calls == [1]
++    asyncio.run(case())
++
++
++def test_cannot_short_circuit_or_spawn_unawaited_turn(monkeypatch):
++    async def case():
++        from hermes_cli import plugins
++        calls = []
++        async def native():
++            calls.append(1)
++        async def policy(**kwargs):
++            return 'fabricated success'
++        monkeypatch.setattr(plugins, '_delivery_manager', lambda: SimpleNamespace(_middleware={'gateway_turn_execution': [policy]}))
++        with pytest.raises(RuntimeError):
++            await run_scheduled_turn(native, input_bytes=1)
++        assert not calls
++    asyncio.run(case())
++
++
++def test_cancellation_joins_native_work_and_does_not_retry(monkeypatch):
++    async def case():
++        from hermes_cli import plugins
++        gate, started = asyncio.Event(), asyncio.Event()
++        calls = []
++        async def native():
++            calls.append(1)
++            started.set()
++            await gate.wait()
++            return 'original'
++        async def policy(next_call, **kwargs):
++            return await next_call()
++        monkeypatch.setattr(plugins, '_delivery_manager', lambda: SimpleNamespace(_middleware={'gateway_turn_execution': [policy]}))
++        turn = asyncio.create_task(run_scheduled_turn(native, input_bytes=1))
++        await started.wait()
++        turn.cancel()
++        await asyncio.sleep(0)
++        turn.cancel()
++        await asyncio.sleep(0)
++        assert not turn.done()
++        gate.set()
++        with pytest.raises(asyncio.CancelledError):
++            await turn
++        assert calls == [1]
++    asyncio.run(case())
++
++
++def test_native_exception_cannot_be_swallowed_by_policy(monkeypatch):
++    async def case():
++        from hermes_cli import plugins
++        calls = []
++        async def native():
++            calls.append(1)
++            raise LookupError('native failure')
++        async def policy(next_call, **kwargs):
++            try:
++                await next_call()
++            except LookupError:
++                return 'invented success'
++        monkeypatch.setattr(plugins, '_delivery_manager', lambda: SimpleNamespace(_middleware={'gateway_turn_execution': [policy]}))
++        with pytest.raises(LookupError):
++            await run_scheduled_turn(native, input_bytes=1)
++        assert calls == [1]
++    asyncio.run(case())
++
++
++def test_routed_profile_manager_and_metadata_are_preserved(tmp_path, monkeypatch):
++    async def case():
++        from gateway import session_ingress
++        from gateway.run import _profile_runtime_scope
++        from gateway.session_contract import SessionRef
++        from gateway.session_finite import execute_finite_admission
++        from hermes_cli.plugins import get_plugin_manager
++        from hermes_constants import get_hermes_home
++        launch, routed = tmp_path / 'launch', tmp_path / 'profiles' / 'routed'
++        launch.mkdir()
++        routed.mkdir(parents=True)
++        seen = []
++        async def policy(next_call, **metadata):
++            seen.append(('policy', get_hermes_home(), metadata))
++            return await next_call()
++        with _profile_runtime_scope(launch):
++            get_plugin_manager()._discovered = True
++        with _profile_runtime_scope(routed):
++            manager = get_plugin_manager()
++            manager._discovered = True
++            monkeypatch.setattr(manager, '_middleware', {'gateway_turn_execution': [policy]})
++        row = {'admission_id': 'a', 'payload': {'text': '가', 'finite': False}}
++        async def native(authority, ref, passed_row):
++            assert passed_row is row  # original complete envelope, not an addon copy
++            seen.append(('native', get_hermes_home()))
++            return 'actual-result'
++        monkeypatch.setattr(session_ingress, 'execute_admission', native)
++        authority = SimpleNamespace(profile_id=str(routed), runner=SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True)))
++        with _profile_runtime_scope(launch):
++            assert await execute_finite_admission(authority, SessionRef(str(routed), 's'), row) == 'actual-result'
++            assert get_hermes_home() == launch
++        physical = seen[0][2].pop('physical_completion')
++        assert physical.done() and not physical.cancelled()
++        assert seen[0] == ('policy', routed, {'profile_id': str(routed), 'session_id': 's', 'admission_id': 'a', 'input_bytes': 3})
++        assert seen[1] == ('native', routed)
++    asyncio.run(case())

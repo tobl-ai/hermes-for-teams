@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-for-teams"
-version = "0.1.0"
-description = "Explicit durable team queue and worker add-on for Hermes Agent"
+version = "0.2.0"
+description = "Automatic native-turn scheduling and explicit queue add-on for Hermes Agent"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = []

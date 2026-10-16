@@ -1,13 +1,42 @@
-# Hermes for Teams — explicit queue/worker add-on
+# Hermes for Teams — automatic native-turn scheduling
 
 **Public experimental alpha — not a production-ready 100-user chat server.**
 
 다른 Hermes 설치본에 **포크 없이 애드온으로 설치·시험**할 수 있습니다. 단, 설치만으로 일반 Discord 대화가 자동 분산되거나 100명 동시 사용 성능이 보장되지는 않습니다. 운영 전체가 아닌 별도 시험 프로필부터 적용하세요.
 
-A standalone native Hermes plugin and a stdlib-only Python CLI. No patched core, provider middleware,
-monkeypatches, daemon installed on load, or automatic gateway interception.
+The explicit queue is a standalone native Hermes plugin and stdlib-only CLI.
+**Automatic ordinary-request scheduling additionally requires the optional core
+extension shipped as patches in `compat/`.** This is a local extension, not an
+upstream-approved interface or a Hermes fork. Keep the official update remote.
 
-## Implemented behavior
+## v0.2: 일반 요청 자동 스케줄링
+
+일반 native 요청은 `teams_submit` 없이 자동으로 스케줄링할 수 있습니다. 원본
+세션·작성자·첨부·승인·전달은 Hermes가 계속 소유합니다. 먼저 `compat/`의 본체
+연결 패치를 호환되는 Hermes source에 검증·적용하고, 해당 프로필 설정에
+`automatic_enabled: true`를 넣은 뒤 기존 작업을 보존하는 정상 재기동이 필요합니다.
+애드온 설치만 하거나 설정만 저장한 것은 활성화 완료가 아닙니다.
+
+```yaml
+plugins:
+  entries:
+    hermes-for-teams:
+      settings:
+        automatic_enabled: true
+        automatic_interactive: 2
+        automatic_background: 1
+        automatic_heavy_bytes: 4096
+        trusted_operator_tools: false
+        allow_cli_workers: false
+```
+
+독립 세션은 예약된 슬롯 안에서 병렬 실행되고 같은 세션의 순서는 기존 durable
+FIFO가 유지합니다. 입력 크기 기반 분류는 실행 시간 예측이 아닙니다. 제한은
+프로필/프로세스 단위이며 원격 서버 분산이나 100명 처리량 보장을 의미하지 않습니다.
+실제 코드·수명 경계와 검증 범위는 [자동 스케줄링 기록](docs/automatic-scheduling.md)을 보세요.
+타임아웃 뒤에도 실제 executor가 살아 있으면 슬롯을 유지하고, 물리 완료 시 반환합니다.
+
+## Implemented behavior (explicit queue)
 
 - Durable owner-local SQLite admission queue, with separate reserved
   `interactive` (2) and `background` (1) slots by default. Multiple worker
@@ -99,7 +128,7 @@ hermes --profile YOUR_PROFILE plugins list
 hermes --profile YOUR_PROFILE teams --help
 ```
 
-This is the **v0.1.0 experimental prerelease**. The command above follows the current
+This is the **v0.2.0 experimental prerelease**. The command above follows the current
 repository default branch. For a pinned install, append `--ref` with a full
 40-character commit SHA from the release notes; Hermes does not accept a tag name
 in that option. Installing does not start workers,
