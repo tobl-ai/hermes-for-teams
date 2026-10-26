@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import sys
 
@@ -44,14 +45,13 @@ def test_mismatched_profile_and_unsupported_contract_fail_closed(tmp_path):
         check_contract(dict(good, session_create={'sources': ['oneshot'], 'parameters': ['title']}), tmp_path)
 
 
-@pytest.mark.asyncio
-async def test_existing_owner_query_preserves_single_query_approvals(monkeypatch, tmp_path):
+def test_existing_owner_query_preserves_single_query_approvals(monkeypatch, tmp_path):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
-    import hermes_cli.gateway_runtime_discovery as discovery
-    import hermes_cli.gateway_runtime as runtime
-    import hermes_cli.gateway_client as transport
-    from hermes_cli.gateway_chat_view import GatewayChatView
+    discovery = pytest.importorskip('hermes_cli.gateway_runtime_discovery')
+    runtime = pytest.importorskip('hermes_cli.gateway_runtime')
+    transport = pytest.importorskip('hermes_cli.gateway_client')
+    GatewayChatView = pytest.importorskip('hermes_cli.gateway_chat_view').GatewayChatView
     from hermes_for_teams.gateway_query import query
 
     calls = []
@@ -79,7 +79,7 @@ async def test_existing_owner_query_preserves_single_query_approvals(monkeypatch
     monkeypatch.setattr(runtime, '_endpoint', lambda *a, **kw: SimpleNamespace(state='ready', endpoint=object()))
     monkeypatch.setattr(transport, 'connect_gateway', connect)
     monkeypatch.setattr(GatewayChatView, 'run', run)
-    assert await query(tmp_path, tmp_path, 'fixture', tmp_path) == 0
+    assert asyncio.run(query(tmp_path, tmp_path, 'fixture', tmp_path)) == 0
     submitted = next(params for method, params in calls if method == 'prompt.submit')
     assert submitted['finite'] is True
     assert submitted.get('unattended') is not True

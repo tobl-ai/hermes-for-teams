@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import stat
@@ -21,6 +22,8 @@ OCCUPIED = ('running', 'cancel_requested', 'unknown')
 
 class Queue:
     def __init__(self, path, capacities=None):
+        if os.name != 'posix':
+            raise ValueError('The explicit queue requires POSIX owner permissions; automatic scheduling is separate')
         self.path = Path(path).expanduser().absolute()
         if str(self.path.resolve()).startswith('/Volumes/'):
             raise ValueError('Live queue must be on private internal storage, not /Volumes')
@@ -125,7 +128,8 @@ class Queue:
             self._recover(db)
 
     def claim(self, lane, lease=60, scope=None):
-        if lane not in self.capacities or not 0 < lease <= 86400:
+        self._validate_lease(lease)
+        if lane not in self.capacities:
             raise ValueError('Invalid lane or lease')
         with self._tx() as db:
             self._recover(db)
@@ -157,6 +161,7 @@ class Queue:
             return [dict(r) for r in db.execute('SELECT * FROM jobs WHERE tenant=? AND profile=? ORDER BY seq', (tenant, profile))]
 
     def heartbeat(self, tenant, profile, job_id, token, lease=60):
+        self._validate_lease(lease)
         with self._tx() as db:
             self._recover(db)
             j = self._get(db, tenant, profile, job_id)
@@ -164,6 +169,11 @@ class Queue:
                 raise Conflict('Worker no longer owns a live lease')
             db.execute('UPDATE jobs SET expires=? WHERE id=?', (time.time() + lease, job_id))
             return j['state']
+
+    @staticmethod
+    def _validate_lease(lease):
+        if type(lease) not in (int, float) or not math.isfinite(lease) or not 0 < lease <= 86400:
+            raise ValueError('Lease must be a finite number in (0,86400]')
 
     def finish(self, tenant, profile, job_id, token, result, uncertain=False):
         with self._tx() as db:

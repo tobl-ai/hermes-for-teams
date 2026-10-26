@@ -2,7 +2,7 @@
 
 ## 판정
 
-**Experimental. 본체 연결 패치와 애드온이 함께 필요하다. 설치·owner 재기동·실제 호출 검증은 서로 다른 단계다.**
+**1.0.0 정식 지원 기능. 호환 본체 연결 패치와 애드온이 함께 필요하다. 설치·owner 재기동·실제 호출 검증은 서로 다른 단계다.**
 
 일반 메시지가 `teams_submit` 없이 실제 native ingress → 인증 → 기존 durable
 SessionAuthority FIFO → 새 whole-turn scheduling seam → 기존 실행 경로로 흐른다.
@@ -46,7 +46,7 @@ SessionAuthority FIFO → 새 whole-turn scheduling seam → 기존 실행 경�
 
 1. **필수 seam은 upstream에 없다.** 이 버전의 `compat/` 패치를 호환되는 본체에
    적용해야 한다. 애드온만 공식 무수정 Hermes에 설치하면 자동 스케줄링은 작동하지 않는다.
-2. 제한은 **등록된 addon 인스턴스 / event loop / 프로필** 단위다. 모든 프로필의 host-wide
+2. 제한은 **event loop / 프로필** 단위이며 플러그인 재등록으로 초기화되지 않는다. 모든 프로필의 host-wide
    공용 제한, cross-process/cross-host placement, 인증 domain 간 이동은 구현하지 않았다.
 3. heavy 분류는 입력 크기(`automatic_heavy_bytes`, 기본 4096)의 **휴리스틱**이다.
    짧은 프롬프트가 오래 걸리는 작업은 interactive 좌석을 차지할 수 있다. 따라서 임의

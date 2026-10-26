@@ -1,6 +1,6 @@
 [project]
 name = "hermes-for-teams"
-version = "0.2.0"
+version = "1.0.0"
 description = "Automatic native-turn scheduling and explicit queue add-on for Hermes Agent"
 requires-python = ">=3.10"
 license = {text = "MIT"}

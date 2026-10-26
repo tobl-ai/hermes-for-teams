@@ -1,21 +1,75 @@
-# Hermes for Teams — automatic native-turn scheduling
+# Hermes for Teams
 
-**Public experimental alpha — not a production-ready 100-user chat server.**
+Version **1.0.0** — bounded native-turn scheduling and a durable operator task queue
+for Hermes Agent. Keep the official Hermes installation and update remote; no fork
+or replacement provider is required. Not endorsed by Nous Research.
 
-다른 Hermes 설치본에 **포크 없이 애드온으로 설치·시험**할 수 있습니다. 단, 설치만으로 일반 Discord 대화가 자동 분산되거나 100명 동시 사용 성능이 보장되지는 않습니다. 운영 전체가 아닌 별도 시험 프로필부터 적용하세요.
+## What it does
 
-The explicit queue is a standalone native Hermes plugin and stdlib-only CLI.
-**Automatic ordinary-request scheduling additionally requires the optional core
-extension shipped as patches in `compat/`.** This is a local extension, not an
-upstream-approved interface or a Hermes fork. Keep the official update remote.
+**Automatic scheduling** wraps a supported Hermes native execution path. Ordinary
+requests need no `teams_submit` call. Hermes retains sender authorization, original
+input and attachments, session history, approvals, controls and reply delivery.
+Independent sessions can execute concurrently; a shared conversation retains its
+native ordering. Separate interactive/background reservations bound concurrent
+turns, including after a timeout while the physical executor is still alive.
 
-## v0.2: 일반 요청 자동 스케줄링
+**The explicit queue** is a separate operator feature: persistent SQLite admission,
+FIFO per conversation, atomic multi-process claims, message-key deduplication,
+heartbeats, stale-worker fencing, cancellation and conservative crash recovery.
+It does not resume a shared Hermes conversation or replace native chat history.
 
-일반 native 요청은 `teams_submit` 없이 자동으로 스케줄링할 수 있습니다. 원본
-세션·작성자·첨부·승인·전달은 Hermes가 계속 소유합니다. 먼저 `compat/`의 본체
-연결 패치를 호환되는 Hermes source에 검증·적용하고, 해당 프로필 설정에
-`automatic_enabled: true`를 넣은 뒤 기존 작업을 보존하는 정상 재기동이 필요합니다.
-애드온 설치만 하거나 설정만 저장한 것은 활성화 완료가 아닙니다.
+### Supported boundaries
+
+- Native plugin installation: an existing Hermes with directory-plugin and CLI
+  registration APIs. Automatic scheduling additionally needs the checked core
+  connection below; plugin installation alone does not enable it.
+- Automatic core connections: exact upstream commit
+  `1fd18277267152893a8a24792b79213e7ca3f899`, and the previously verified local
+  `0bf79b848b526017e5ce4e5e5535fe0c4782a1cf` / patched `e457d6d7…` layout.
+  Unknown versions fail closed. See [compatibility](compat/README.md).
+- Explicit queue/workers: **macOS and Linux/POSIX**, Python 3.10+. They require
+  owner-only file permissions and process-group termination. Windows patch
+  application is tested separately; Windows operator queues are not supported.
+- Default automatic capacity: two interactive turns plus one background turn per
+  profile/event loop. Input size is a lane heuristic, **not execution-time prediction**.
+- No cross-server worker placement, global provider-account quota manager,
+  per-user authorization for operator tools, or guarantee of 100 simultaneous
+  model responses within a latency target. Backpressure cannot create CPU/RAM or
+  provider entitlement. The [release criteria](docs/release-criteria.md) distinguish
+  tested software behavior from service-capacity acceptance.
+
+## Install
+
+```sh
+hermes --profile YOUR_PROFILE plugins install tobl-ai/hermes-for-teams --enable
+hermes --profile YOUR_PROFILE plugins list
+hermes --profile YOUR_PROFILE teams doctor
+```
+
+Use an existing profile and review the custom-source/dependency consent prompt.
+For reproducibility, use `--ref` with the release's **full 40-character commit SHA**;
+a tag name is not accepted by Hermes' pin option. Existing pinned installations
+must be deliberately updated/reinstalled to the new SHA. Installation never
+copies auth, changes models, starts workers or silently restarts the Gateway.
+
+### Enable automatic scheduling
+
+From this repository (or the native plugin's installed Git directory), check the
+**actual Hermes source root**, not the profile directory. On Windows, substitute
+paths such as `C:/path/to/hermes-agent`.
+
+```sh
+python scripts/compat.py check --hermes /path/to/hermes-agent
+python scripts/compat.py apply --hermes /path/to/hermes-agent --backup-dir /private/internal/backups
+```
+
+The helper checks the exact revision and every hunk, preserves unrelated files,
+backs up affected source outside the checkout and verifies the result. No force
+patches, upstream update, configuration changes or lifecycle actions are hidden
+inside it. Reapplying is a no-op. `source_status: ready` does **not** establish
+runtime activation. New Hermes versions may require a new connection.
+
+Merge these settings into the target profile, preserving unrelated keys:
 
 ```yaml
 plugins:
@@ -30,148 +84,20 @@ plugins:
         allow_cli_workers: false
 ```
 
-독립 세션은 예약된 슬롯 안에서 병렬 실행되고 같은 세션의 순서는 기존 durable
-FIFO가 유지합니다. 입력 크기 기반 분류는 실행 시간 예측이 아닙니다. 제한은
-프로필/프로세스 단위이며 원격 서버 분산이나 100명 처리량 보장을 의미하지 않습니다.
-실제 코드·수명 경계와 검증 범위는 [자동 스케줄링 기록](docs/automatic-scheduling.md)을 보세요.
-타임아웃 뒤에도 실제 executor가 살아 있으면 슬롯을 유지하고, 물리 완료 시 반환합니다.
+Use the exact owner's supported activation/restart lifecycle during authorized
+maintenance. Do not start a second standalone Gateway for a multiplexed profile.
+Verify the replacement runtime revision and a real request with fresh
+`teams_auto enter` / `teams_auto leave` log records. `teams doctor` is an offline
+configuration diagnostic, not proof of runtime or provider health. Shared-room
+sessions are **not** silently split by user; doing so changes collaboration history.
 
-## Implemented behavior (explicit queue)
+## Explicit operator queue
 
-- Durable owner-local SQLite admission queue, with separate reserved
-  `interactive` (2) and `background` (1) slots by default. Multiple worker
-  processes share atomic capacity and claim decisions through one internal DB.
-- Idempotency on `(tenant, profile, message)`; reusing that key with different
-  prompt/conversation/lane is rejected rather than silently losing new input.
-- FIFO within `(tenant, profile, conversation)`, including across lanes.
-  Independent conversations can run concurrently. A long task in *another*
-  conversation does not occupy the interactive reservation.
-- Explicit opt-in worker executes the pinned official
-  `hermes --profile PROFILE chat -Q --format stream-json -q PROMPT` path.
-  It never switches model/provider, copies auth, adds `--yolo`, invokes a shell,
-  or falls back to local in-process inference. A terminal JSON result, session ID,
-  exit code 0 and nonempty response are required; a queue receipt is not success.
-- Scoped operator CLI: submit/get/status/cancel/recover/resolve/worker/doctor.
-- Optional model-facing tools, **off by default**, for trusted operator-only
-  sessions. The plugin opens neither queue nor worker during registration.
-- A request builder for the existing `hermes-workflows` tool. Its output passes
-  the catalog-pinned upstream structural validator. **This is grammar-compatible
-  handoff preparation, not a running workflow or verified workflow reuse.**
-
-## Safety / supported release scope
-
-**Do not expose these tools to an untrusted multi-user gateway.** Tenant/profile
-are operator-configured routing namespaces, not authenticated user identities.
-The public tool handler used here has no validated Discord sender/tenant binding.
-Conversation/message IDs are caller supplied, and all trusted operators in one
-configured scope can read or cancel its jobs. A model can forge another ID in
-that same scope. For this reason `trusted_operator_tools: false` hides *all* model
-tools and rejects direct handler invocation, even when the queue itself is enabled.
-Opting in explicitly accepts this shared trust domain; it does not fix authorization.
-
-The CLI is an owner/admin surface. An OS user who can read the DB or operator
-settings is trusted. Python subprocesses are **not a security sandbox**. Do not
-share one OS credential identity among mutually untrusted tenants. Queue queries
-check tenant/profile scope, but the DB owner can access all rows. This add-on does
-not authorize external writes; the configured Hermes runtime retains its normal
-approval policy. It does not broaden an existing unattended/yolo configuration.
-
-Live queue storage must be internal, with directory mode 0700, file mode 0600,
-and correct ownership. `/Volumes/` and immediate symlinks are rejected. It stores
-plaintext prompts/results, not credentials. Use a dedicated private directory;
-never place it in the public checkout, unencrypted external storage, a remote
-shared filesystem, or share live Hermes session SQLite between workers.
-
-A conversation here is a **scheduling key**, not resumed Hermes chat history.
-Each job launches a fresh CLI turn. FIFO does not claim conversation/session
-migration. A modern official CLI may itself attach to the profile's existing
-Gateway owner: isolating that CLI process does **not** prove a whole agent turn
-or tools moved into a separate execution process. Only submitted jobs use this
-queue; ordinary Discord/Telegram traffic bypasses it completely.
-
-## Failure, cancellation and reconciliation
-
-States: `queued -> running -> succeeded`; queued cancellation becomes
-`cancelled`; running cancellation becomes `cancel_requested -> unknown`.
-Expired leases, nonzero exits, timeouts, ambiguous/missing terminal results and
-interrupted workers become `unknown`, **never automatically replayed**.
-Unknown work retains its lane seat and blocks later work in that conversation.
-A CLI can detach while its Gateway work still exists: killing the CLI alone is
-not proof that the underlying turn stopped.
-
-An operator must verify the real owner/worker stopped and reconcile external
-writes, then use `resolve JOB_ID --note 'verified disposition ...'`. This closes
-as `resolved`, never retries the original message. Reusing the same idempotency
-key still returns the original job. Start genuinely new work only with a new
-message ID after reconciliation. No queue can promise exactly-once remote writes
-without destination-side idempotency/receipts; this package deliberately chooses
-no automatic retry over replaying uncertain effects. A normal completed turn is
-not independently verified proof of every external write it describes.
-
-`recover` conservatively marks expired attempts unknown, not queued. Disabling
-or removing the plugin does not kill independent worker processes or delete
-pending state. Stop workers, reconcile running/unknown attempts, and preserve
-state before removal. `--watch` workers must be explicitly stopped by the operator.
-Capacity policy is persisted at queue creation; mismatched explicit policies
-are rejected. Limits are across this queue only, not provider-account/global-host
-limits. Changing limits requires draining and explicitly creating a new queue.
-
-## Install on another Hermes
-
-Public repository: https://github.com/tobl-ai/hermes-for-teams
-
-Replace `YOUR_PROFILE` with an existing **test profile** on the target installation:
-
-```sh
-hermes --profile YOUR_PROFILE plugins install tobl-ai/hermes-for-teams --enable
-hermes --profile YOUR_PROFILE plugins list
-hermes --profile YOUR_PROFILE teams --help
-```
-
-This is the **v0.2.0 experimental prerelease**. The command above follows the current
-repository default branch. For a pinned install, append `--ref` with a full
-40-character commit SHA from the release notes; Hermes does not accept a tag name
-in that option. Installing does not start workers,
-copy authentication, change models or route ordinary conversations into the queue.
-Hermes may ask for approval for this non-catalog source and its package metadata.
-Configure the target profile as below before `teams status` / `teams doctor`.
-For an already-running Gateway, schedule normal activation when idle; do not
-restart it from inside an active task just to load this alpha.
-
-## Local installation and smoke verification
-
-Python >=3.10; native plugin verification was on the installed official runtime.
-macOS tested; Linux declared but not exercised on a Linux host in this run.
-The native verifier creates a disposable local Git source,
-a separate credential-free `HERMES_HOME` and a `tobl` fixture profile. It exercises
-real official file-URL installation with dependency consent and enable, load,
-submit/status/doctor, an actual source update, disable, read-back and removal.
-It never restarts a gateway or calls a model. The initial install may resolve
-Hermes dependencies and require network/cache access.
-
-```sh
-python -m pytest -q -o addopts='' --basetemp "$PRIVATE_SCRATCH/teams-tests" tests
-python -m hermes_for_teams.cli --help
-hermes --profile tobl plugins validate . --json
-python scripts/verify_native.py --hermes /absolute/path/to/hermes \
-  --scratch "$PRIVATE_SCRATCH" --uv-cache /absolute/path/to/uv-cache
-python scripts/verify_workflow_grammar.py --scratch "$PRIVATE_SCRATCH"
-```
-
-Set `PRIVATE_SCRATCH` to private **internal** disposable storage. The optional
-workflow grammar probe downloads and imports one pinned third-party validator
-into its temporary directory; review that source before running it. No third-party
-engine is vendored or automatically installed by this package.
-
-For a reviewed local checkout, `python -m pip install .` provides `hermes-teams`.
-A directory plugin has root `plugin.yaml` and `register(ctx)`; settings are read
-only via public `ctx.get_config`. Use the pinned prerelease installation above
-for experiments. Do not modify the official Hermes update remote.
-
-## Operator configuration
-
-Place settings under `plugins.entries.hermes-for-teams.settings` in the target
-profile's `config.yaml`, preserving unrelated configuration:
+This is an **owner/admin interface**, not an untrusted multi-user tool boundary.
+Tenant/profile are configured namespaces, not authenticated user identities.
+Model tools are disabled by default; enabling them gives trusted operators within
+that scope shared read/cancel access. Do not treat caller-supplied conversation or
+message IDs as user authorization. See [security](SECURITY.md).
 
 ```yaml
 plugins:
@@ -181,84 +107,85 @@ plugins:
         enabled: true
         trusted_operator_tools: false
         tenant: trusted-team
-        profile: tobl
-        queue_path: /absolute/internal/private/teams/queue.db
+        profile: YOUR_PROFILE
+        queue_path: /absolute/private/internal/teams/queue.db
         allow_cli_workers: false
         hermes_executable: /absolute/path/to/hermes
 ```
 
-These are operator choices, not tool parameters. Enable the plugin itself using
-its normal installation/activation flow; the settings flag does not install it.
-Native `hermes teams` CLI requires in-process plugin loading; host-isolation
-capability probing reports CLI registration is skipped in the plugin host. The
-standalone `hermes-teams --config SETTINGS.json` surface is independent of that.
-Do not weaken a production isolation policy merely to expose this CLI.
+Use private internal storage: directory mode `0700`, DB mode `0600`, correct
+ownership. External `/Volumes/` and immediate symlinks are rejected. Never put
+live state in the public checkout, shared remote SQLite or unencrypted external
+storage. Prompts/results are stored in plaintext; configure retention and backups
+according to your organization. Do not store credentials in task payloads.
 
 ```sh
-hermes --profile tobl teams doctor
-hermes --profile tobl teams submit --conversation c1 --message event1 \
-  --lane background --prompt 'Standalone long task'
-hermes --profile tobl teams status
-hermes --profile tobl teams get JOB_ID
-hermes --profile tobl teams cancel JOB_ID
+hermes --profile YOUR_PROFILE teams submit --conversation c1 --message event1 --lane interactive --prompt 'A reviewed task'
+hermes --profile YOUR_PROFILE teams status
+hermes --profile YOUR_PROFILE teams get JOB_ID
+hermes --profile YOUR_PROFILE teams cancel JOB_ID
 ```
 
-Only after verifying the exact target profile/owner, current provider route and
-approval behavior, explicitly set `allow_cli_workers: true`. One worker invocation
-processes jobs sequentially until none are claimable; launch a small bounded
-number per lane, never 100 heavyweight Hermes processes on a small workstation.
+Only after verifying the intended profile, provider and approval route, explicitly
+opt in to `allow_cli_workers: true`. Workers invoke the pinned Hermes executable,
+never add `--yolo`, replace the provider or use local inference as a fallback.
+Run a small bounded number of workers per lane, not 100 heavyweight CLI processes.
 
 ```sh
-hermes --profile tobl teams worker --lane interactive --watch
-hermes --profile tobl teams worker --lane background --watch
+hermes --profile YOUR_PROFILE teams worker --lane interactive --watch
+hermes --profile YOUR_PROFILE teams worker --lane background --watch
 ```
 
-`doctor` is an offline scope/route-configuration diagnostic, not inference,
-auth, isolation, remote-write, or throughput verification. It reports unsupported
-claims as false. JSON standalone settings use the same keys:
-`hermes-teams --config /private/settings.json status`.
+Each explicit job starts a fresh CLI turn. A conversation ID provides ordering,
+not memory continuity. Modern Hermes may attach the CLI to its existing owner;
+subprocess separation is **not** proof of whole-turn isolation or a security sandbox.
+The optional existing-owner adapter is version-specific, not required for automatic
+chat scheduling. `teams_workflow` only builds a structurally checked handoff for
+an independently installed workflow tool; it neither runs nor queues that workflow.
 
-For a trusted operator-only profile, `trusted_operator_tools: true` exposes
-`teams_submit`, `teams_status`, `teams_cancel`, `teams_workflow` under the `teams`
-toolset (subject to Hermes toolset selection). It does not start workers.
-`teams_workflow` returns `{executed:false,tool:'workflow',request:...}`. The
-operator must separately review and invoke an installed workflow tool. Do not
-also enqueue that same work here and claim its separate runner is bounded by
-this queue. See [reuse assessment](docs/reuse-assessment.md).
+### Recovery contract
 
-## Compatibility / remaining gates
+Successful jobs require a unique terminal Hermes result, session ID, zero exit
+code and nonempty text. A queued/admitted receipt is not success.
 
-Public interfaces used: directory `register(ctx)`, `ctx.get_config`,
-`ctx.register_tool`, `ctx.register_cli_command`, and the official chat CLI's
-stream-json terminal contract. No private core imports in package code.
-No claim of compatibility with releases lacking these behaviors.
+`queued → running → succeeded`; queued cancellation becomes `cancelled`.
+Timeouts, crashes, expired leases, running cancellation, ambiguous results and
+missing acknowledgments become **`unknown`, never automatically replayed**.
+Unknown work keeps its reservation and blocks later work in that conversation.
+Killing a CLI does not prove that its underlying Gateway or external effects stopped.
 
-Remaining blockers to the original 100-human goal:
-
-1. Authenticated per-user ingress and result delivery, tenant membership, trusted
-   conversation/message derivation and cancellation authorization.
-2. A supported whole-turn ownership/admission/offload interface for the actual
-   configured Codex/Gateway path. Model middleware is neither sufficient nor
-   used as an enforcement substitute here.
-3. Real provider/approval/session smoke, then staged 1/5/10/25/50/100 load with
-   rate-limit and memory-pressure stop conditions, and real messaging E2E.
-   These were **not run**. Existing runtime admission/startup uncertainty is not
-   an excuse to bypass the owner with a local inference fallback.
-4. Real provider/tool/user-authorization security review and production rollout
-   gates remain open. Publishing this experimental alpha and verifying installation
-   is not production approval. No live installation or gateway restart is implied.
-
-## Update or remove
+After verifying the real worker stopped and reconciling external effects:
 
 ```sh
+hermes --profile YOUR_PROFILE teams recover
+hermes --profile YOUR_PROFILE teams resolve JOB_ID --note 'Verified worker stopped and effects reconciled'
+```
+
+Resolution closes the old job without retrying it. Its idempotency key stays
+reserved. Exactly-once external writes require destination-side idempotency and
+receipts; an agent's success text does not prove every write occurred.
+Capacity policy is persisted at queue creation. Drain/reconcile before changing
+it, then explicitly create a new queue. The CLI does not silently reset live state.
+
+## Test, update, remove
+
+```sh
+python -m pytest tests -q -o addopts=
+python scripts/verify_native.py --hermes /absolute/path/to/hermes --scratch /private/internal/scratch --uv-cache /path/to/uv-cache
 hermes --profile YOUR_PROFILE plugins update hermes-for-teams
 hermes --profile YOUR_PROFILE plugins disable hermes-for-teams
 hermes --profile YOUR_PROFILE plugins remove hermes-for-teams
 ```
 
-Review versions and canary-test before updates. Stop workers and reconcile unknown
-work before removal. The queue database is deliberately not deleted by uninstall.
+Native verification uses credential-free disposable homes and performs real
+install/load/update/disable/remove operations without inference or Gateway restart.
+See [verification](docs/verification.md), [compatibility](compat/README.md) and
+[contributing](CONTRIBUTING.md) for native integration tests and reproducible scope.
 
-Not endorsed by Nous Research. License: [MIT](LICENSE).
+Disabling/removing the plugin does not kill independent workers or delete state.
+Stop watch workers, reconcile uncertain work and preserve the queue before removal.
+A standalone `python -m pip install .` supplies `hermes-teams --config SETTINGS.json`
+for the operator queue; native automatic mode requires the matched Hermes/plugin
+pair above. Keep existing isolation policies rather than weakening them for CLI access.
 
-See [execution evidence](docs/verification.md) for exactly what was exercised.
+License: [MIT](LICENSE). Changes: [CHANGELOG](CHANGELOG.md).

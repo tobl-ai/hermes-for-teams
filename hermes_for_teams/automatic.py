@@ -5,16 +5,14 @@ media, approvals and delivery. Classification is a size heuristic, not predicted
 """
 import asyncio
 import logging
-from weakref import WeakKeyDictionary
+from contextlib import suppress
 
 logger = logging.getLogger('hermes.teams.scheduler')
 
 
 def _log(message, *args):
-    try:
+    with suppress(Exception):  # Logging must not change execution or leak a seat.
         logger.info(message, *args)
-    except Exception:
-        pass  # Operational logging must not change execution or leak a seat.
 
 
 
@@ -39,6 +37,7 @@ class AutomaticScheduler:
             if type(value) is not int or value < 1:
                 raise ValueError('automatic scheduler limits must be positive integers')
         self.heavy_bytes = heavy_bytes
+        self.waiting = 0
         self._seats = {'interactive': asyncio.Semaphore(interactive),
                        'background': asyncio.Semaphore(background)}
         self.active = dict.fromkeys(self._seats, 0)
@@ -50,7 +49,11 @@ class AutomaticScheduler:
         lane = 'background' if input_bytes >= self.heavy_bytes else 'interactive'
         # Waiting cancellation creates no work. Native unknown workers retain
         # reservations; there is intentionally no automatic release/replay.
-        await self._seats[lane].acquire()
+        self.waiting += 1
+        try:
+            await self._seats[lane].acquire()
+        finally:
+            self.waiting -= 1
         self.active[lane] += 1
         self.peak[lane] = max(self.peak[lane], self.active[lane])
         _log('teams_auto enter lane=%s active=%d', lane, self.active[lane])
@@ -88,14 +91,35 @@ def register_automatic(ctx):
     limits = (ctx.get_config('automatic_interactive', 2),
               ctx.get_config('automatic_background', 1),
               ctx.get_config('automatic_heavy_bytes', 4096))
-    from gateway.session_managed_worker import ManagedExecutionUnknown
-    unknown_errors = (ManagedExecutionUnknown,)
+    from gateway import turn_scheduling
+    if getattr(turn_scheduling, 'COMPATIBILITY', None) == 'legacy-1fd18277':
+        # This verified layout has no managed-process execution path. Its native
+        # executor completion is tracked by the legacy core connection instead.
+        unknown_errors = ()
+    else:
+        from gateway.session_managed_worker import ManagedExecutionUnknown
+        unknown_errors = (ManagedExecutionUnknown,)
     AutomaticScheduler(*limits, unknown_errors=unknown_errors)  # validate before registration
-    schedulers = WeakKeyDictionary()
-
     async def schedule(**kwargs):
         loop = asyncio.get_running_loop()
-        if loop not in schedulers:
-            schedulers[loop] = AutomaticScheduler(*limits, unknown_errors=unknown_errors)
-        return await schedulers[loop].run(**kwargs)
+        profile_id = kwargs.get('profile_id')
+        if not isinstance(profile_id, str) or not profile_id:
+            raise ValueError('Native scheduling requires a profile identity')
+        # Extension-owned data on the event loop outlives plugin re-registration.
+        # No Hermes methods/classes are replaced. A closed loop can collect this
+        # state with its semaphores, unlike a process-global strong loop registry.
+        key = '_hermes_for_teams_automatic_v1'
+        registry = getattr(loop, key, None)
+        if registry is None:
+            registry = {}
+            setattr(loop, key, registry)
+        if profile_id in registry:
+            policy, scheduler = registry[profile_id]
+            if policy != limits:
+                if scheduler.waiting or any(scheduler.active.values()):
+                    raise RuntimeError('Drain native work before changing automatic capacity')
+                del registry[profile_id]
+        if profile_id not in registry:
+            registry[profile_id] = (limits, AutomaticScheduler(*limits, unknown_errors=unknown_errors))
+        return await registry[profile_id][1].run(**kwargs)
     ctx.register_middleware('gateway_turn_execution', schedule)

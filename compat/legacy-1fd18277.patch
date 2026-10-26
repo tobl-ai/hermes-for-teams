@@ -1,0 +1,165 @@
+diff --git a/gateway/run_turn.py b/gateway/run_turn.py
+index 068f8240ed..ed462ec2e5 100644
+--- a/gateway/run_turn.py
++++ b/gateway/run_turn.py
+@@ -2932,7 +2932,10 @@ class GatewayTurnMixin:
+         """Profile-scoping wrapper around ``_run_agent_inner`` (same keyword parameters; pass-through
+         when multiplexing is off)."""
+         with self._profile_scope_for_source(source):
+-            return await self._run_agent_inner(message, context_prompt, history, source, session_id, **turn_kwargs)
++            from gateway.turn_scheduling import run_legacy_turn
++            async def native():
++                return await self._run_agent_inner(message, context_prompt, history, source, session_id, **turn_kwargs)
++            return await run_legacy_turn(native, message=message, session_id=session_id)
+ 
+     def _run_agent_display_settings(self, source: SessionSource) -> GatewayRunner._RunAgentDisplay:
+         """Resolve per-platform display, progress, status and streaming-surface settings for a turn."""
+@@ -3478,6 +3481,8 @@ class GatewayTurnMixin:
+         worker.executor_task = asyncio.ensure_future(
+             self._run_in_executor_with_context(_run_sync_with_timeout_lifecycle)
+         )
++        from gateway.turn_scheduling import register_physical_completion
++        register_physical_completion(worker.worker_done)
+         return worker
+ 
+     @staticmethod
+diff --git a/gateway/turn_scheduling.py b/gateway/turn_scheduling.py
+new file mode 100644
+index 0000000000..4517c25fc6
+--- /dev/null
++++ b/gateway/turn_scheduling.py
+@@ -0,0 +1,122 @@
++"""Optional whole-chat-turn seam for the verified legacy 1fd18277 layout.
++
++Keep native session claims, profile scope, controls and delivery unchanged.
++No prompt reinjection and no monkeypatching. This is not a durable admission API.
++"""
++import asyncio
++from contextvars import ContextVar
++from types import MappingProxyType
++
++COMPATIBILITY = 'legacy-1fd18277'
++KIND = 'gateway_turn_execution'
++_physical_events: ContextVar[list | None] = ContextVar('teams_legacy_physical_events', default=None)
++_legacy_scope: ContextVar[dict | None] = ContextVar('teams_legacy_scope', default=None)
++_physical_join_tasks = set()
++
++
++def register_physical_completion(event):
++    events = _physical_events.get()
++    if events is not None:
++        events.append(event)
++
++
++def _settle_physical(future, events):
++    if all(event.is_set() for event in events):
++        if not future.done():
++            future.set_result(None)
++        return
++    async def wait():
++        while not all(event.is_set() for event in events):
++            await asyncio.sleep(.05)
++        if not future.done():
++            future.set_result(None)
++    task = asyncio.create_task(wait())
++    _physical_join_tasks.add(task)
++    task.add_done_callback(_physical_join_tasks.discard)
++
++
++async def _join(task):
++    cancelled = False
++    while True:
++        try:
++            result = await asyncio.shield(task)
++            break
++        except asyncio.CancelledError:
++            if task.done() and task.cancelled():
++                raise
++            cancelled = True
++    if cancelled:
++        raise asyncio.CancelledError
++    return result
++
++
++async def run_scheduled_turn(next_call, **metadata):
++    from hermes_cli.plugins import _delivery_manager
++    callbacks = list(_delivery_manager()._middleware.get(KIND, ()))
++    if not callbacks:
++        return await next_call()
++    completion = asyncio.get_running_loop().create_future()
++    events = []
++    native_started = False
++    metadata = MappingProxyType({**metadata, 'physical_completion': completion})
++
++    async def native():
++        nonlocal native_started
++        native_started = True
++        token = _physical_events.set(events)
++        try:
++            return await next_call()
++        finally:
++            _physical_events.reset(token)
++            _settle_physical(completion, events)
++
++    async def at(index):
++        if index == len(callbacks):
++            return await native()
++        closed, task = False, None
++        async def once():
++            nonlocal task
++            if closed or task is not None:
++                raise RuntimeError('gateway turn continuation is single-use and turn-scoped')
++            task = asyncio.create_task(at(index + 1))
++            return await _join(task)
++        error = None
++        try:
++            await callbacks[index](next_call=once, **metadata)
++        except BaseException as exc:
++            error = exc
++        finally:
++            closed = True
++        if task is not None:
++            result = await _join(task)
++            if error is not None and not isinstance(error, Exception):
++                raise error
++            return result
++        if error is not None:
++            raise error
++        raise RuntimeError('gateway scheduling middleware did not execute its continuation')
++    try:
++        return await at(0)
++    finally:
++        if not native_started:
++            _settle_physical(completion, events)
++
++
++async def run_legacy_turn(next_call, *, message, session_id):
++    from hermes_constants import get_hermes_home
++    profile_id = str(get_hermes_home())
++    parent = _legacy_scope.get()
++    if parent and parent['open'] and parent['profile_id'] == profile_id:
++        # Native queued follow-ups recursively call _run_agent before the outer
++        # call returns. They remain inside that same lease, not a second seat.
++        return await next_call()
++    scope = {'profile_id': profile_id, 'open': True}
++    async def native():
++        token = _legacy_scope.set(scope)
++        try:
++            return await next_call()
++        finally:
++            scope['open'] = False
++            _legacy_scope.reset(token)
++    return await run_scheduled_turn(native, profile_id=profile_id, session_id=session_id,
++                                    admission_id='', input_bytes=len(message.encode('utf-8')))
+diff --git a/hermes_cli/middleware.py b/hermes_cli/middleware.py
+index 753b6643ab..2757df0eba 100644
+--- a/hermes_cli/middleware.py
++++ b/hermes_cli/middleware.py
+@@ -22,6 +22,7 @@ LLM_REQUEST_MIDDLEWARE = "llm_request"
+ LLM_EXECUTION_MIDDLEWARE = "llm_execution"
+ 
+ VALID_MIDDLEWARE: set[str] = {
++    'gateway_turn_execution',
+     TOOL_REQUEST_MIDDLEWARE, TOOL_EXECUTION_MIDDLEWARE, LLM_REQUEST_MIDDLEWARE, LLM_EXECUTION_MIDDLEWARE,
+ }
+ 

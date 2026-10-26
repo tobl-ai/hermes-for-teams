@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--core', required=True)
     parser.add_argument('--scratch', required=True, help='Private internal disposable scratch directory')
+    parser.add_argument('--timeout', type=float, default=120, help='Bounded offline test deadline in seconds')
     parser.add_argument('tests', nargs='+')
     args = parser.parse_args()
     scratch = Path(args.scratch).expanduser().resolve()
@@ -25,14 +26,20 @@ def main():
                HERMES_HOME=str(root / 'state'), HERMES_TEST_SANDBOX_HOME=str(root / 'state'), TMPDIR=str(root / 'tmp'),
                PYTHONPATH=os.pathsep.join((str(Path(args.core).resolve()), str(Path(__file__).resolve().parents[1]))),
                PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1')
-    command = [sys.executable, '-m', 'pytest', *args.tests, '-o', 'addopts=', '-q']
-    result = subprocess.run(command, cwd=args.core, env=env, capture_output=True, text=True)
-    (root / 'pytest-output.txt').write_text(result.stdout + result.stderr)
+    command = [sys.executable, '-m', 'pytest', *args.tests, '-o', 'addopts=', '-o', 'faulthandler_timeout=30', '-q']
+    output = root / 'pytest-output.txt'
+    with output.open('w') as stream:
+        try:
+            result = subprocess.run(command, cwd=args.core, env=env, stdout=stream, stderr=subprocess.STDOUT,
+                                    check=False, text=True, timeout=args.timeout)
+            exit_code = result.returncode
+        except subprocess.TimeoutExpired:
+            exit_code = 124
     (root / 'receipt.json').write_text(json.dumps({'scope': 'offline synthetic fixtures; no live provider/platform',
-                                                  'command': command, 'exit_code': result.returncode}, indent=2))
-    print(result.stdout + result.stderr)
+                                                  'command': command, 'exit_code': exit_code}, indent=2))
+    print(output.read_text())
     print('EVIDENCE=' + str(root))
-    return result.returncode
+    return exit_code
 
 
 if __name__ == '__main__':

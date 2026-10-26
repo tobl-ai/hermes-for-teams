@@ -1,6 +1,7 @@
 """Operator CLI. No worker process starts on plugin load."""
 import argparse
 import json
+import os
 import time
 from collections import Counter
 from pathlib import Path
@@ -40,10 +41,13 @@ def dispatch(args, cfg):
     if action == 'workflow':
         print(json.dumps(workflow_request(args.prompt), ensure_ascii=False))
         return 0
-    if not all(isinstance(cfg.get(k), str) and cfg[k].strip() for k in ('queue_path', 'tenant', 'profile')):
-        raise ValueError('Configure queue_path, tenant, profile explicitly')
     if action == 'doctor':
-        checks = {'scope_configured': True, 'automatic_chat_offload': False,
+        checks = {'scope_configured': all(isinstance(cfg.get(k), str) and cfg[k].strip()
+                                         for k in ('queue_path', 'tenant', 'profile')),
+                  'automatic_chat_offload': False,
+                  'automatic_scheduling_configured': cfg.get('automatic_enabled') is True,
+                  'runtime_verified': False,
+                  'operator_worker_supported': os.name == 'posix',
                   'cli_worker_opt_in': cfg.get('allow_cli_workers') is True,
                   'provider_capacity_verified': False,
                   'per_user_authorization': False,
@@ -52,6 +56,8 @@ def dispatch(args, cfg):
             hermes_command(cfg, {'payload': 'route validation only; never executed'})
         print(json.dumps(checks))
         return 0
+    if not all(isinstance(cfg.get(k), str) and cfg[k].strip() for k in ('queue_path', 'tenant', 'profile')):
+        raise ValueError('Configure queue_path, tenant, profile explicitly')
     q = Queue(cfg['queue_path'])
     scope = (cfg['tenant'], cfg['profile'])
     if action == 'status':

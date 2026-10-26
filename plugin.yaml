@@ -1,5 +1,5 @@
 name: hermes-for-teams
-version: 0.2.0
+version: 1.0.0
 description: "Automatic native-turn scheduling plus explicit queue; automatic mode requires the optional Hermes core seam"
 provides_middleware:
   - gateway_turn_execution
@@ -18,7 +18,7 @@ config_schema:
   automatic_enabled:
     type: bool
     default: false
-    description: "Experimental ordinary native-turn scheduling; requires optional gateway_turn_execution core seam"
+    description: "Bounded ordinary native-turn scheduling; requires the matched gateway_turn_execution core connection"
   automatic_interactive:
     type: int
     default: 2

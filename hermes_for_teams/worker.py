@@ -75,6 +75,8 @@ def _stop(proc):
 
 def run_one(queue, tenant, profile, lane, command_factory, timeout=300, result_validator=None):
     """The callable is an internal test seam, not exposed to model tools or CLI."""
+    if os.name != 'posix':
+        raise ValueError('Explicit workers require POSIX process-group termination')
     if not 0 < timeout <= 86400:
         raise ValueError('Timeout must be in (0,86400]')
     job = queue.claim(lane, lease=30, scope=(tenant, profile))
@@ -105,8 +107,9 @@ def run_one(queue, tenant, profile, lane, command_factory, timeout=300, result_v
                 uncertain = True
                 _stop(proc)
             uncertain = uncertain or proc.returncode != 0
+            uncertain = uncertain or os.fstat(output.fileno()).st_size > 2 * 1024 * 1024
             output.seek(0)
-            result = output.read(65536).decode('utf-8', errors='replace')
+            result = output.read(2 * 1024 * 1024).decode('utf-8', errors='replace')
         if result_validator is not None and not uncertain:
             result = result_validator(result)
         queue.finish(tenant, profile, job['id'], job['token'], result, uncertain=uncertain)

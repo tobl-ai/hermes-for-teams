@@ -27,6 +27,7 @@ def main():
             shutil.copy2(repo / name, source / name)
         shutil.copytree(repo / 'hermes_for_teams', source / 'hermes_for_teams', ignore=shutil.ignore_patterns('__pycache__'))
         def run(argv, env=None, cwd=None, expect=0):
+            print('$', ' '.join(argv).replace(str(root), '<TEMP>'), flush=True)
             try:
                 proc = subprocess.run(argv, env=env, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
             except subprocess.TimeoutExpired as exc:
@@ -48,7 +49,15 @@ def main():
         env = {'PATH': os.environ['PATH'], 'HOME': str(fake_user), 'TMPDIR': str(root), 'HERMES_HOME': str(home),
                'HERMES_DISABLE_UPDATE_CHECK': '1', 'PYTHONIOENCODING': 'utf-8'}
         if args.uv_cache:
-            env['UV_CACHE_DIR'] = str(Path(args.uv_cache).resolve())
+            cache = Path(args.uv_cache).resolve(strict=True)
+            if not cache.is_dir():
+                raise ValueError('--uv-cache must name an existing dependency cache directory')
+            # Current Hermes PM selects <data-root>/cache/uv explicitly and
+            # ignores UV_CACHE_DIR. Share only cached package bytes, never the
+            # real data root, environment ledger, profiles or credentials.
+            (home / 'cache').mkdir(mode=0o700, exist_ok=True)
+            (home / 'cache' / 'uv').symlink_to(cache, target_is_directory=True)
+            env['UV_CACHE_DIR'] = str(cache)
         command = [args.hermes, '--profile', 'tobl']
         run(command + ['plugins', 'install', source.as_uri(), '--yes-deps', '--enable'], env)
         installed = profile / 'plugins' / 'hermes-for-teams'
@@ -70,11 +79,15 @@ def main():
         status = run(command + ['teams', 'status'], env)
         assert '"jobs": 1' in status
         manifest = source / 'plugin.yaml'
-        manifest.write_text(manifest.read_text().replace('version: 0.2.0', 'version: 0.2.1'))
+        version = next(line.split(':', 1)[1].strip() for line in manifest.read_text().splitlines()
+                       if line.startswith('version:'))
+        major, minor, patch = (int(part) for part in version.split('.'))
+        updated = f'{major}.{minor}.{patch + 1}'
+        manifest.write_text(manifest.read_text().replace(f'version: {version}', f'version: {updated}'))
         run(['git', '-C', str(source), 'add', '.'])
         run(['git', '-C', str(source), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Update fixture'])
         run(command + ['plugins', 'update', 'hermes-for-teams'], env)
-        assert 'version: 0.2.1' in (installed / 'plugin.yaml').read_text()
+        assert f'version: {updated}' in (installed / 'plugin.yaml').read_text()
         run(command + ['plugins', 'disable', 'hermes-for-teams'], env)
         listing = run(command + ['plugins', 'list', '--plain', '--no-bundled'], env)
         assert listing.strip().startswith('disabled') and 'hermes-for-teams' in listing
