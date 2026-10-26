@@ -1,0 +1,26 @@
+name: Core compatibility patches
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  legacy-patch:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest
+      - name: Fetch exact public upstream source
+        run: |
+          git init upstream-compat
+          git -C upstream-compat remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C upstream-compat fetch --depth 1 origin 1fd18277267152893a8a24792b79213e7ca3f899
+          git -C upstream-compat checkout --detach FETCH_HEAD
+      - name: Check clean apply, backups, conflicts and idempotence
+        env:
+          HERMES_COMPAT_SOURCE: ${{ github.workspace }}/upstream-compat
+        run: python -m pytest tests/test_compat_cli.py -q -o addopts=
