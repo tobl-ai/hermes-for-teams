@@ -1,6 +1,6 @@
 # Hermes for Teams
 
-Version **1.0.0** — bounded native-turn scheduling and a durable operator task queue
+Version **1.1.0** — bounded native-turn scheduling and a durable operator task queue
 for Hermes Agent. Keep the official Hermes installation and update remote; no fork
 or replacement provider is required. Not endorsed by Nous Research.
 
@@ -23,10 +23,11 @@ It does not resume a shared Hermes conversation or replace native chat history.
 - Native plugin installation: an existing Hermes with directory-plugin and CLI
   registration APIs. Automatic scheduling additionally needs the checked core
   connection below; plugin installation alone does not enable it.
-- Automatic core connections: exact upstream commit
-  `1fd18277267152893a8a24792b79213e7ca3f899`, and the previously verified local
-  `0bf79b848b526017e5ce4e5e5535fe0c4782a1cf` / patched `e457d6d7…` layout.
-  Unknown versions fail closed. See [compatibility](compat/README.md).
+- Automatic core connections: tested upstream layouts `1fd18277…`,
+  `bf0203a7…` and submission-aware `f0d94882…`, plus the previously verified
+  local `0bf79b84…` / patched `e457d6d7…` layout. Unrelated revisions with
+  identical connection modules are accepted; changed layouts fail closed.
+  See [compatibility](compat/README.md).
 - Explicit queue/workers: **macOS and Linux/POSIX**, Python 3.10+. They require
   owner-only file permissions and process-group termination. Windows patch
   application is tested separately; Windows operator queues are not supported.

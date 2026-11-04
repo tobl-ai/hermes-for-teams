@@ -15,7 +15,7 @@ def run(home, action='check', *extra):
 
 
 @pytest.fixture
-def old_checkout(tmp_path):
+def old_checkout(tmp_path, request):
     # Exact public commit, not reconstructed/fake fixture source. Sparse checkout
     # keeps this test small; the wrapper itself is exercised by legacy integration.
     import os
@@ -24,13 +24,15 @@ def old_checkout(tmp_path):
     else:
         gateway = pytest.importorskip('gateway')
         source = Path(gateway.__file__).resolve().parents[1]
-    if subprocess.run(['git', '-C', str(source), 'cat-file', '-e', BASE], check=False, capture_output=True).returncode:
+    base = getattr(request, 'param', BASE)
+    if subprocess.run(['git', '-C', str(source), 'cat-file', '-e', base], check=False, capture_output=True).returncode:
         pytest.skip('exact upstream commit not available; run native verifier with 1fd18277 checkout')
     home = tmp_path / 'hermes'
     subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout', str(source), str(home)], check=True)
     subprocess.run(['git', '-C', str(home), 'sparse-checkout', 'set', '--no-cone',
-                    '/gateway/run_turn.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
-    subprocess.run(['git', '-C', str(home), 'checkout', '--quiet', '--detach', BASE], check=True)
+                    '/gateway/run_turn.py', '/gateway/session_finite.py',
+                    '/gateway/session_runtime_workers.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
+    subprocess.run(['git', '-C', str(home), 'checkout', '--quiet', '--detach', base], check=True)
     return home
 
 
@@ -71,6 +73,73 @@ def test_conflicting_local_edit_fails_without_source_changes(old_checkout, tmp_p
     assert result.returncode == 2
     assert file.read_bytes() == before
     assert not (home / 'gateway/turn_scheduling.py').exists()
+
+
+def commit_change(home, path, content):
+    target = home / path
+    target.write_text(content)
+    subprocess.run(['git', '-C', str(home), 'add', '--sparse', '--', path], check=True)
+    subprocess.run(['git', '-C', str(home), '-c', 'user.name=Compatibility Test',
+                    '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture change'], check=True)
+
+
+def test_unrelated_new_revision_accepts_same_execution_layout(old_checkout, tmp_path):
+    commit_change(old_checkout, 'release-note.txt', 'unrelated upstream update\n')
+    result = run(old_checkout)
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout)['source_status'] == 'needs_patch'
+    applied = run(old_checkout, 'apply', '--backup-dir', str(tmp_path / 'backups'))
+    assert applied.returncode == 0, applied.stdout
+    assert run(old_checkout).returncode == 0
+
+
+def test_changed_execution_layout_refused_even_when_patch_could_apply(old_checkout):
+    path = 'gateway/run_turn.py'
+    content = (old_checkout / path).read_text()
+    commit_change(old_checkout, path, content + '\n# execution module changed upstream\n')
+    before = (old_checkout / path).read_bytes()
+    result = run(old_checkout)
+    assert result.returncode == 2
+    assert 'Unsupported Hermes execution layout' in result.stdout
+    assert (old_checkout / path).read_bytes() == before
+
+
+@pytest.mark.parametrize('old_checkout', [
+    'bf0203a794a07aac3ff764972ab9087baa4e4f4e',
+    'f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab'], indirect=True)
+def test_current_submission_layout_apply_and_idempotence(old_checkout, tmp_path):
+    home = old_checkout
+    target = home / 'gateway/session_finite.py'
+    before = target.read_bytes()
+    check = run(home)
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert json.loads(check.stdout)['source_status'] == 'needs_patch'
+    assert target.read_bytes() == before
+    applied = run(home, 'apply', '--backup-dir', str(tmp_path / 'backups'))
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    data = json.loads(applied.stdout)
+    assert data['source_status'] == 'ready' and data['runtime_activated'] is False
+    assert (Path(data['backup']) / 'gateway/session_finite.py').read_bytes() == before
+    after = target.read_bytes()
+    scope = b"submission_turn_scope(row['admission_id'], row.get('request_id'))"
+    assert (scope in after) == (scope in before)
+    assert b'run_scheduled_turn' in after
+    assert run(home, 'apply').returncode == 0
+    assert target.read_bytes() == after
+
+
+def test_line_ending_only_blob_change_is_not_identical(old_checkout):
+    path = 'gateway/run_turn.py'
+    target = old_checkout / path
+    original = target.read_bytes()
+    (old_checkout / '.git/info/attributes').write_text(path + ' -text\n')
+    target.write_bytes(original.replace(b'\n', b'\r\n'))
+    subprocess.run(['git', '-C', str(old_checkout), 'add', '--sparse', '--', path], check=True)
+    subprocess.run(['git', '-C', str(old_checkout), '-c', 'user.name=Compatibility Test',
+                    '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture newline'], check=True)
+    result = run(old_checkout)
+    assert result.returncode == 2
+    assert 'Unsupported Hermes execution layout' in result.stdout
 
 
 def test_non_checkout_refused(tmp_path):

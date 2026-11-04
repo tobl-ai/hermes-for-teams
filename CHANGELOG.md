@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0
+
+- Support the f0d94882 upstream submission-aware finite-admission layout while
+  preserving submission identity and routed-profile scope.
+- Support the bf0203a7 finite-admission layout independently of the older
+  onboarding prerequisite patch.
+- Accept unrelated upstream revisions only when packaged connection modules
+  match a tested baseline; changed layouts still fail closed.
+- Add exact-source apply/backup/idempotence and submission-scope regressions.
+- Prepare compatibility CI for old/current layouts and a daily upstream probe.
+- No automatic core installation, Gateway restart or runtime activation.
+
 ## 1.0.0
 
 - Establish the supported native scheduler and POSIX operator-queue contracts,

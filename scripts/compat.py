@@ -1,4 +1,4 @@
-"""Exact-revision, checked core compatibility patches. Never updates or restarts Hermes."""
+"""Tested-layout core compatibility patches. Never updates or restarts Hermes."""
 import argparse
 import json
 import shutil
@@ -8,6 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCHSETS = {
+    'f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab': ['submission-f0d94882.patch'],
+    'bf0203a794a07aac3ff764972ab9087baa4e4f4e': [
+        '0002-feat-connect-native-turns-to-optional-scheduling-mid.patch'],
     '1fd18277267152893a8a24792b79213e7ca3f899': ['legacy-1fd18277.patch'],
     '0bf79b848b526017e5ce4e5e5535fe0c4782a1cf': [
         '0001-fix-import-Path-before-onboarding-handler-annotation.patch',
@@ -28,9 +31,37 @@ def inspect(home):
     if top.returncode or Path(top.stdout.strip()).resolve() != home:
         raise ValueError('--hermes must identify the actual checkout root')
     head = git(home, 'rev-parse', 'HEAD').stdout.strip()
-    if head not in PATCHSETS:
-        raise ValueError('Untested Hermes revision: ' + head + '; no source or configuration changed')
-    patches = [str(ROOT / 'compat' / name) for name in PATCHSETS[head]]
+    selected = PATCHSETS.get(head)
+    if selected is None:
+        # Permit unrelated upstream updates, but not unreviewed execution changes.
+        # Compare the tracked connection modules, not a version string or merely
+        # whether fuzzy patch context happens to apply.
+        for baseline, names in PATCHSETS.items():
+            if git(home, 'cat-file', '-e', baseline + '^{commit}').returncode:
+                continue
+            paths = set()
+            for name in names:
+                for line in (ROOT / 'compat' / name).read_text().splitlines():
+                    if line.startswith('+++ b/'):
+                        paths.add(line[6:])
+            matches = True
+            for path in paths:
+                # Compare Git blob IDs: text-mode `git show` would normalize
+                # CRLF/CR and incorrectly accept distinct connection sources.
+                # ls-tree succeeds with empty output only for absent paths;
+                # any actual Git error is a refusal, never 'both absent'.
+                expected = git(home, 'ls-tree', baseline, '--', path)
+                actual = git(home, 'ls-tree', 'HEAD', '--', path)
+                if expected.returncode or actual.returncode or expected.stdout != actual.stdout:
+                    matches = False
+                    break
+            if matches:
+                selected = names
+                break
+        if selected is None:
+            raise ValueError('Unsupported Hermes execution layout: ' + head +
+                             '; connection modules differ from tested layouts; no source or configuration changed')
+    patches = [str(ROOT / 'compat' / name) for name in selected]
     applied = git(home, 'apply', '--reverse', '--check', '--', *patches)
     if applied.returncode == 0:
         return home, head, patches, 'ready'

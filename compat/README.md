@@ -17,12 +17,34 @@ not add it. Keep the official upstream remote; this is not a Hermes fork.
   use the original `0001`/`0002` patches. The verified result is local core
   **`e457d6d756c3132ba4f0440a12d2004717b6630a`**. Do not assume those local
   commits can be fetched from the official upstream.
-- Other revisions are refused until ported and tested, not guessed from file
-  names or force-patched. Official updates can require a new compatibility port.
+- Other revisions are accepted when every tracked connection module matches a
+  tested baseline byte-for-byte, including expected absence of newly added
+  files, and the packaged patch passes forward or reverse checks. This allows
+  unrelated upstream updates without a commit-number allowlist. Historical
+  baseline objects must be available locally; shallow checkouts without them
+  fail closed. Changed execution modules still require a reviewed port; patch
+  applicability alone is not proof of lifecycle compatibility.
 
 The legacy ordinary-chat connection does not provide every newer CLI or the
 newer existing-owner RPC adapter. Automatic mode does not require that explicit
 queue adapter. The explicit queue is a separate feature.
+
+## Modern source ports
+
+`f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab` uses
+`submission-f0d94882.patch`. This retains the new `submission_turn_scope` around
+policy and native execution, including cleanup on return. Request identity
+remains native rather than being exposed as plugin authority.
+
+
+`bf0203a794a07aac3ff764972ab9087baa4e4f4e` uses the existing `0002` finite-admission
+patch without `0001`. Unlike the legacy ordinary-chat wrapper, this seam sits at
+native finite admission and preserves managed-worker unknown fencing. In a
+credential-free disposable checkout, core scheduling plus native/physical add-on
+tests passed (19 tests), followed by the full add-on suite (54 passed, 9 skipped).
+These are offline integration tests, not live model/platform acceptance. No
+installed core was patched and no Gateway restarted. Publication, installation
+and authorized activation remain separate gates.
 
 ## Check and apply
 
@@ -51,7 +73,7 @@ off unless separately needed. Verify new runtime identity plus an actual request
 and fresh `teams_auto` records. Source `ready` still reports
 `runtime_activated: false`.
 
-Both layouts retain capacity until physical executor completion, not merely a
+All supported layouts retain capacity until physical executor completion, not merely a
 coroutine timeout. Unknown outcomes must not be replayed. Do not weaken existing
 plugin isolation or safe-worker policies to enable the feature.
 

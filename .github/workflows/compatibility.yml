@@ -1,9 +1,14 @@
 name: Core compatibility patches
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * *'
 permissions:
   contents: read
 jobs:
-  legacy-patch:
+  checked-patches:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -16,13 +21,62 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install pytest
-      - name: Fetch exact public upstream source
+      - name: Fetch tested public source layouts
+        shell: bash
         run: |
+          set -euo pipefail
           git init upstream-compat
           git -C upstream-compat remote add origin https://github.com/NousResearch/hermes-agent.git
-          git -C upstream-compat fetch --depth 1 origin 1fd18277267152893a8a24792b79213e7ca3f899
-          git -C upstream-compat checkout --detach FETCH_HEAD
+          for rev in 1fd18277267152893a8a24792b79213e7ca3f899 bf0203a794a07aac3ff764972ab9087baa4e4f4e f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab; do
+            git -C upstream-compat fetch --depth 1 origin "$rev"
+            git -C upstream-compat update-ref "refs/compat/$rev" FETCH_HEAD
+          done
+          git -C upstream-compat checkout --detach f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab
       - name: Check clean apply, backups, conflicts and idempotence
         env:
           HERMES_COMPAT_SOURCE: ${{ github.workspace }}/upstream-compat
         run: python -m pytest tests/test_compat_cli.py -q -o addopts=
+  native-submission:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Exact modern core declares its runtime dependency set for 3.14+.
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+      - name: Prepare disposable exact native source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init upstream-native
+          git -C upstream-native remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C upstream-native fetch --depth 1 origin f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab
+          git -C upstream-native checkout --detach FETCH_HEAD
+          # Core requires uv's dependency overrides (pip cannot honor them).
+          uv sync --project upstream-native --python 3.14 --no-dev
+          python scripts/compat.py apply --hermes upstream-native --backup-dir "$RUNNER_TEMP/compat-backups"
+      - name: Native lifecycle and submission scope must execute without skips
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --project upstream-native --no-dev --with pytest --with pytest-asyncio --with pyyaml python scripts/verify_automatic.py --core upstream-native --scratch "$RUNNER_TEMP" "$GITHUB_WORKSPACE/tests/test_submission_context.py" "$GITHUB_WORKSPACE/tests/test_automatic_native.py" "$GITHUB_WORKSPACE/tests/test_automatic_physical.py" tests/gateway/test_turn_scheduling.py | tee "$RUNNER_TEMP/native-results.txt"
+          python -c 'import pathlib, re; text=pathlib.Path("'"$RUNNER_TEMP"'/native-results.txt").read_text(); assert re.search(r"[1-9][0-9]* passed", text) and not re.search(r"[0-9]+ skipped", text), text'
+  upstream-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch upstream main and comparison baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git upstream-probe
+          for rev in 1fd18277267152893a8a24792b79213e7ca3f899 bf0203a794a07aac3ff764972ab9087baa4e4f4e f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab; do
+            git -C upstream-probe fetch origin "$rev"
+          done
+          git -C upstream-probe checkout --detach origin/main
+      - name: Detect execution-layout drift without installing or restarting
+        run: python scripts/compat.py check --hermes upstream-probe
