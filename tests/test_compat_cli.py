@@ -29,6 +29,11 @@ def old_checkout(tmp_path, request):
         pytest.skip('exact upstream commit not available; run native verifier with 1fd18277 checkout')
     home = tmp_path / 'hermes'
     subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout', str(source), str(home)], check=True)
+    # A shallow CI source can retain baselines only under refs/compat. A clone
+    # copies its advertised tip, not every custom ref/tree; fetch this fixture's
+    # exact baseline explicitly, from the already downloaded local source.
+    subprocess.run(['git', '-C', str(home), 'fetch', '--quiet', '--depth', '1',
+                    'origin', base], check=True, capture_output=True)
     subprocess.run(['git', '-C', str(home), 'sparse-checkout', 'set', '--no-cone',
                     '/gateway/run_turn.py', '/gateway/session_finite.py',
                     '/gateway/session_runtime_workers.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
