@@ -31,6 +31,14 @@ queue adapter. The explicit queue is a separate feature.
 
 ## Modern source ports
 
+Version **1.1.1** additionally verifies official v0.22.7
+`b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and main
+`ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df`. Both select the existing
+submission patch through identical connection blobs, not a new revision allowlist.
+The surrounding native lifecycle is exercised independently on each target:
+20 focused tests pass with no skips. CI pins both targets plus the prior baseline.
+See [verification](../docs/verification-1.1.1.md) for the exact offline scope.
+
 `f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab` uses
 `submission-f0d94882.patch`. This retains the new `submission_turn_scope` around
 policy and native execution, including cleanup on return. Request identity

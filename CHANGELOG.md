@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1
+
+- Revalidate the unchanged submission-aware core connection on official Hermes
+  v0.22.7 (`b200f5bc…`) and main `ed1afb08…`; no new commit allowlist or force patch.
+- Expand exact-source apply/backup/idempotence regressions and no-skip native CI
+  to both targets while retaining the prior f0d94882 integration baseline.
+- Fetch only required fixture trees rather than cloning unrelated partial-source
+  refs, preserving shallow CI and credential-free local verification.
+- No production core update, plugin installation, Gateway restart or live rollout.
+
 ## 1.1.0
 
 - Support the f0d94882 upstream submission-aware finite-admission layout while

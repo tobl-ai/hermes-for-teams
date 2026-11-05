@@ -1,5 +1,5 @@
 name: hermes-for-teams
-version: 1.1.0
+version: 1.1.1
 description: "Automatic native-turn scheduling plus explicit queue; automatic mode requires the optional Hermes core seam"
 provides_middleware:
   - gateway_turn_execution

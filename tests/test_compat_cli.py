@@ -28,12 +28,19 @@ def old_checkout(tmp_path, request):
     if subprocess.run(['git', '-C', str(source), 'cat-file', '-e', base], check=False, capture_output=True).returncode:
         pytest.skip('exact upstream commit not available; run native verifier with 1fd18277 checkout')
     home = tmp_path / 'hermes'
-    subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout', str(source), str(home)], check=True)
-    # A shallow CI source can retain baselines only under refs/compat. A clone
-    # copies its advertised tip, not every custom ref/tree; fetch this fixture's
-    # exact baseline explicitly, from the already downloaded local source.
-    subprocess.run(['git', '-C', str(home), 'fetch', '--quiet', '--depth', '1',
-                    'origin', base], check=True, capture_output=True)
+    # Fetch only the required trees. Cloning all advertised refs from a partial
+    # source can traverse unrelated missing promisor objects, even with --shared.
+    # Keep the submission baseline for the real compatibility selector, not a
+    # new revision allowlist, and retain shallow multi-ref CI coverage.
+    subprocess.run(['git', 'init', '--quiet', str(home)], check=True)
+    subprocess.run(['git', '-C', str(home), 'remote', 'add', 'origin', str(source)], check=True)
+    refs = [base]
+    if base in ('b200f5bc60e31588ba2cb60e288029c4a54ba5fa',
+                'ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df'):
+        refs.append('f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab')
+    result = subprocess.run(['git', '-C', str(home), 'fetch', '--quiet', '--depth', '1',
+                             'origin', *refs], check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
     subprocess.run(['git', '-C', str(home), 'sparse-checkout', 'set', '--no-cone',
                     '/gateway/run_turn.py', '/gateway/session_finite.py',
                     '/gateway/session_runtime_workers.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
@@ -111,7 +118,9 @@ def test_changed_execution_layout_refused_even_when_patch_could_apply(old_checko
 
 @pytest.mark.parametrize('old_checkout', [
     'bf0203a794a07aac3ff764972ab9087baa4e4f4e',
-    'f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab'], indirect=True)
+    'f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab',
+    'b200f5bc60e31588ba2cb60e288029c4a54ba5fa',
+    'ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df'], indirect=True)
 def test_current_submission_layout_apply_and_idempotence(old_checkout, tmp_path):
     home = old_checkout
     target = home / 'gateway/session_finite.py'
