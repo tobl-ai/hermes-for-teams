@@ -33,6 +33,7 @@ def old_checkout(tmp_path, request):
     # Keep the submission baseline for the real compatibility selector, not a
     # new revision allowlist, and retain shallow multi-ref CI coverage.
     subprocess.run(['git', 'init', '--quiet', str(home)], check=True)
+    subprocess.run(['git','-C',str(home),'config','core.longpaths','true'],check=True)
     subprocess.run(['git', '-C', str(home), 'remote', 'add', 'origin', str(source)], check=True)
     refs = [base]
     if base == 'ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df':
@@ -40,7 +41,12 @@ def old_checkout(tmp_path, request):
     result = subprocess.run(['git', '-C', str(home), 'fetch', '--quiet', '--depth', '1',
                              'origin', *refs], check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    if base not in ('b200f5bc60e31588ba2cb60e288029c4a54ba5fa','aab7134651366febd15d00553301c10607d1cbf4'):
+    if base in ('b200f5bc60e31588ba2cb60e288029c4a54ba5fa','aab7134651366febd15d00553301c10607d1cbf4'):
+        registry=json.loads((SCRIPT.parents[1]/'compat/registry.json').read_text(encoding='utf-8'))
+        layout=next(item for item in registry['layouts'] if item['base']==base)
+        subprocess.run(['git','-C',str(home),'sparse-checkout','set','--no-cone',
+                        *['/'+path for path in layout['blobs']]],check=True,capture_output=True)
+    else:
         subprocess.run(['git', '-C', str(home), 'sparse-checkout', 'set', '--no-cone',
                         '/gateway/run_turn.py', '/gateway/session_finite.py',
                         '/gateway/session_runtime_workers.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
@@ -89,7 +95,7 @@ def test_conflicting_local_edit_fails_without_source_changes(old_checkout, tmp_p
 
 def commit_change(home, path, content):
     target = home / path
-    target.write_text(content)
+    target.write_text(content,encoding='utf-8')
     subprocess.run(['git', '-C', str(home), 'add', '--sparse', '--', path], check=True)
     subprocess.run(['git', '-C', str(home), '-c', 'user.name=Compatibility Test',
                     '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture change'], check=True)

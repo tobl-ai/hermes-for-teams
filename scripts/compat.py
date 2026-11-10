@@ -22,7 +22,7 @@ PATCHSETS = {
 
 
 def git(home, *args):
-    return subprocess.run(['git', '-C', str(home), *args], check=False, capture_output=True, text=True)
+    return subprocess.run(['git', '-C', str(home), *args], check=False, capture_output=True, text=True,encoding='utf-8')
 
 
 def inspect(home, capability='automatic'):
@@ -33,7 +33,7 @@ def inspect(home, capability='automatic'):
     head = git(home, 'rev-parse', 'HEAD').stdout.strip()
     selected = None
     capabilities = ['automatic']
-    registry = json.loads((ROOT / 'compat/registry.json').read_text())
+    registry = json.loads((ROOT / 'compat/registry.json').read_text(encoding='utf-8'))
     if registry.get('schema') != 1:
         raise ValueError('Unsupported packaged capability registry')
     for layout in registry['layouts']:
@@ -65,7 +65,7 @@ def inspect(home, capability='automatic'):
                 continue
             paths = set()
             for name in names:
-                for line in (ROOT / 'compat' / name).read_text().splitlines():
+                for line in (ROOT / 'compat' / name).read_text(encoding='utf-8').splitlines():
                     if line.startswith('+++ b/'):
                         paths.add(line[6:])
             matches = True
@@ -105,7 +105,7 @@ def apply(home, patches, backup_dir):
     backup = Path(tempfile.mkdtemp(prefix='teams-compat-', dir=destination))
     paths = set()
     for name in patches:
-        for line in Path(name).read_text().splitlines():
+        for line in Path(name).read_text(encoding='utf-8').splitlines():
             if line.startswith('+++ b/'):
                 relative = Path(line[6:])
                 if relative.is_absolute() or '..' in relative.parts:
@@ -122,7 +122,7 @@ def apply(home, patches, backup_dir):
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, out)
             out.chmod(0o600)
-    (backup / 'files.json').write_text(json.dumps(inventory, indent=2))
+    (backup / 'files.json').write_text(json.dumps(inventory, indent=2),encoding='utf-8')
     (backup / 'files.json').chmod(0o600)
     # git apply without --reject is fail-closed; never force hunks or reset user work.
     result = git(home, 'apply', '--', *patches)
