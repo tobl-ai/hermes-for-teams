@@ -35,8 +35,7 @@ def old_checkout(tmp_path, request):
     subprocess.run(['git', 'init', '--quiet', str(home)], check=True)
     subprocess.run(['git', '-C', str(home), 'remote', 'add', 'origin', str(source)], check=True)
     refs = [base]
-    if base in ('b200f5bc60e31588ba2cb60e288029c4a54ba5fa',
-                'ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df'):
+    if base == 'ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df':
         refs.append('f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab')
     result = subprocess.run(['git', '-C', str(home), 'fetch', '--quiet', '--depth', '1',
                              'origin', *refs], check=False, capture_output=True, text=True)

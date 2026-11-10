@@ -1,0 +1,26 @@
+name: Unreviewed upstream drift monitor
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * *'
+permissions:
+  contents: read
+jobs:
+  upstream-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch upstream main and comparison baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git upstream-probe
+          for rev in 1fd18277267152893a8a24792b79213e7ca3f899 bf0203a794a07aac3ff764972ab9087baa4e4f4e f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab b200f5bc60e31588ba2cb60e288029c4a54ba5fa ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df; do
+            git -C upstream-probe fetch origin "$rev"
+          done
+          git -C upstream-probe checkout --detach origin/main
+      - name: Detect execution-layout drift without installing or restarting
+        run: python scripts/compat.py check --hermes upstream-probe

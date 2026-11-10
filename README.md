@@ -33,6 +33,9 @@ It does not resume a shared Hermes conversation or replace native chat history.
   `ed1afb08…`; exact-source native identity, ordering, cancellation and physical
   completion tests run in CI for both, not just a source-layout probe.
   See [1.1.1 verification](docs/verification-1.1.1.md).
+- Moving upstream `main` is not an implicit support target. The separately
+  scheduled upstream-drift monitor deliberately fails on unreviewed layouts;
+  release CI certifies the pinned supported layouts, never weakens that refusal.
 - Explicit queue/workers: **macOS and Linux/POSIX**, Python 3.10+. They require
   owner-only file permissions and process-group termination. Windows patch
   application is tested separately; Windows operator queues are not supported.

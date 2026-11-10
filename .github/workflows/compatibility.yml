@@ -27,13 +27,14 @@ jobs:
           set -euo pipefail
           git init upstream-compat
           git -C upstream-compat remote add origin https://github.com/NousResearch/hermes-agent.git
-          for rev in 1fd18277267152893a8a24792b79213e7ca3f899 bf0203a794a07aac3ff764972ab9087baa4e4f4e f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab b200f5bc60e31588ba2cb60e288029c4a54ba5fa ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df; do
-            git -C upstream-compat fetch --depth 1 origin "$rev"
-            git -C upstream-compat update-ref "refs/compat/$rev" FETCH_HEAD
+          git -C upstream-compat config gc.auto 0
+          git -C upstream-compat config maintenance.auto false
+          refs=()
+          for rev in 1fd18277267152893a8a24792b79213e7ca3f899 bf0203a794a07aac3ff764972ab9087baa4e4f4e f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab b200f5bc60e31588ba2cb60e288029c4a54ba5fa ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df aab7134651366febd15d00553301c10607d1cbf4; do
+            refs+=("$rev:refs/compat/$rev")
           done
+          git -C upstream-compat fetch --no-auto-maintenance --depth 1 origin "${refs[@]}"
           git -C upstream-compat checkout --detach f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab
-          git -C upstream-compat fetch --depth 1 origin aab7134651366febd15d00553301c10607d1cbf4
-          git -C upstream-compat update-ref refs/compat/aab7134651366febd15d00553301c10607d1cbf4 FETCH_HEAD
       - name: Check clean apply, backups, conflicts and idempotence
         env:
           HERMES_COMPAT_SOURCE: ${{ github.workspace }}/upstream-compat
@@ -113,21 +114,3 @@ jobs:
           set -euo pipefail
           uv run --project upstream-native --no-dev --with pytest --with pytest-asyncio --with pyyaml python scripts/verify_automatic.py --core upstream-native --scratch "$RUNNER_TEMP" "$GITHUB_WORKSPACE/tests/test_submission_context.py" "$GITHUB_WORKSPACE/tests/test_automatic_native.py" "$GITHUB_WORKSPACE/tests/test_automatic_physical.py" tests/gateway/test_turn_scheduling.py | tee "$RUNNER_TEMP/native-results.txt"
           python -c 'import pathlib, re; text=pathlib.Path("'"$RUNNER_TEMP"'/native-results.txt").read_text(); assert re.search(r"[1-9][0-9]* passed", text) and not re.search(r"[0-9]+ skipped", text), text'
-  upstream-probe:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Fetch upstream main and comparison baselines
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git upstream-probe
-          for rev in 1fd18277267152893a8a24792b79213e7ca3f899 bf0203a794a07aac3ff764972ab9087baa4e4f4e f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab b200f5bc60e31588ba2cb60e288029c4a54ba5fa ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df; do
-            git -C upstream-probe fetch origin "$rev"
-          done
-          git -C upstream-probe checkout --detach origin/main
-      - name: Detect execution-layout drift without installing or restarting
-        run: python scripts/compat.py check --hermes upstream-probe
