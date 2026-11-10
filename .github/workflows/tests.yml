@@ -7,8 +7,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Standard Intel Mac pool avoids arm64 allocation outages; retain
+        # explicit arm64 coverage instead of dropping macOS or a Python version.
+        os: [ubuntu-latest, macos-15-intel]
         python: ['3.10', '3.11', '3.12']
+        include:
+          - os: macos-latest
+            python: '3.12'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
