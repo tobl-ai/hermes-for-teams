@@ -6,6 +6,9 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = []
 
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
 [project.scripts]
 hermes-teams = "hermes_for_teams.cli:main"
 

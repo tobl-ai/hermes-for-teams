@@ -5,7 +5,7 @@ from types import ModuleType, SimpleNamespace
 from hermes_for_teams.automatic import register_automatic
 
 
-def test_reregistration_cannot_reset_live_capacity(monkeypatch):
+def test_reregistration_cannot_reset_live_capacity(monkeypatch,tmp_path):
     middleware = ModuleType('hermes_cli.middleware')
     monkeypatch.setattr(middleware, 'VALID_MIDDLEWARE', {'gateway_turn_execution'}, raising=False)
     cli = ModuleType('hermes_cli')
@@ -15,6 +15,9 @@ def test_reregistration_cannot_reset_live_capacity(monkeypatch):
     monkeypatch.setitem(sys.modules, 'hermes_cli', cli)
     monkeypatch.setitem(sys.modules, 'hermes_cli.middleware', middleware)
     monkeypatch.setitem(sys.modules, 'gateway', gateway)
+    constants = ModuleType('hermes_constants')
+    monkeypatch.setattr(constants,'get_hermes_home',lambda:tmp_path,raising=False)
+    monkeypatch.setitem(sys.modules,'hermes_constants',constants)
     callbacks = []
     settings = {'automatic_enabled': True, 'automatic_interactive': 1}
     ctx = SimpleNamespace(get_config=lambda k, default=None: settings.get(k, default),
@@ -27,7 +30,7 @@ def test_reregistration_cannot_reset_live_capacity(monkeypatch):
         async def second(): second_started.set()
         register_automatic(ctx)
         first_task = asyncio.create_task(callbacks[-1](next_call=first, profile_id='/same-profile'))
-        await started.wait()
+        await asyncio.wait_for(started.wait(),2)
         register_automatic(ctx)
         second_task = asyncio.create_task(callbacks[-1](next_call=second, profile_id='/same-profile'))
         try:
