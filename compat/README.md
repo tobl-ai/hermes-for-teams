@@ -31,6 +31,22 @@ queue adapter. The explicit queue is a separate feature.
 
 ## Modern source ports
 
+Version 1.2.0 introduces an explicit `--capability same-thread` selector. The
+packaged `registry.json` records reviewed HEAD blobs (including expected absent
+new modules) for exact official `b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and
+`aab7134651366febd15d00553301c10607d1cbf4`. It selects their separate complete
+ports, preserving upstream differences. Unrelated revisions with identical
+reviewed execution blobs are accepted; execution drift is refused even if a
+hunk might apply. The legacy automatic capability does not imply same-thread
+support. On these modern layouts the default automatic selector also chooses
+the complete optional port, but same-thread behavior stays opt-in.
+
+Use `--capability same-thread` for both `check` and `apply` when enabling task
+branches. A checkout carrying an older/different connection patch can conflict;
+do not force it. Restore that installation's exact operator-owned backup during
+drained maintenance, then apply the matching new port. The helper does not
+guess ownership of local changes or remove old patches automatically.
+
 Version **1.1.1** additionally verifies official v0.22.7
 `b200f5bc60e31588ba2cb60e288029c4a54ba5fa` and main
 `ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df`. Both select the existing
@@ -94,6 +110,6 @@ apply, idempotence, conflict refusal and preservation of unrelated files. CI
 patch checks cover Linux and Windows. These are not recipient-PC model/platform
 E2E or 100-user throughput evidence; the recipient PC was not changed here.
 
-Shared-room history is **not** changed to user-specific sessions. A shared
-session stays ordered; independent sessions can run concurrently. Limits are
-per-profile scheduling, not cross-server worker placement.
+Shared-room history is not split by user. Automatic-only sessions stay ordered;
+opt-in same-thread mode uses native task-isolated branches with within-task FIFO.
+Limits are per-profile scheduling, not cross-server worker placement.

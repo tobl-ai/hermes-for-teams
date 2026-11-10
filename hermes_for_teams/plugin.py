@@ -12,7 +12,9 @@ def public_job(job):
 def register(ctx):
     # Registration is cheap and creates no DB, worker, hook, or inference request.
     from .automatic import register_automatic
+    from .task_routing import register_task_routing
     register_automatic(ctx)
+    register_task_routing(ctx)
     def setup(parser):
         from .cli import setup_parser
         setup_parser(parser, embedded=True)

@@ -48,6 +48,12 @@ unknown work and actual resource measurements. Include tools, same-session
 follow-ups, cancellation and destination-side idempotency checks for external
 writes. Never reinterpret synthetic sleep/queue/fixture counts as live users.
 
-Same-room ordering is a deliberate collaboration policy. User-specific sessions
-must be an explicit deployment decision, not a silent optimization that discards
-shared context. Backpressure protects the host; it cannot promise unlimited speed.
+Within-task ordering remains a safety requirement, but serializing every independent
+request in one room is no longer the approved product goal. The approved next scope
+is [same-thread parallel work](same-thread-parallelism.md): task-isolated execution,
+targeted edits/cancellation, and actual shared-write exclusion without asking people
+to split channels. Version 1.1.1 serialized the native shared session; version 1.2.0
+adds optional task branches on reviewed Linux layouts. Ordinary-ingress fixtures,
+physical lifecycle tests, source publication and actual user-path activation are
+reported separately. User-specific sessions must not discard shared collaboration context.
+Backpressure protects the host; it cannot promise unlimited speed.

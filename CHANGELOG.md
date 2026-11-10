@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0
+
+- Add opt-in native task branches for independent work in one shared room, with
+  targeted controls, isolated snapshots and lightweight question authority.
+- Render streaming, edits, final/recovered delivery and native interactions with
+  a ledger-validated task label and the original authenticated request anchor.
+- Hold resource leases through physical process completion. Persistent Linux
+  kernels retain variables while their complete local process tree is suspended
+  between cells. Active native tool RPCs compose into the owning cell's lease.
+- Add direct-backend Linux supervision before shell startup, authenticated
+  request receipts, queued diagnostics, managed/delegated completion acceptance
+  and capability-based exact-core compatibility for b200f5bc and aab71346.
+- No blanket remote-effect exactly-once or hostile same-UID sandbox claim; unknown
+  effects retain reservations. Live activation is a separate owner lifecycle.
+
 ## 1.1.1
 
 - Revalidate the unchanged submission-aware core connection on official Hermes

@@ -1,6 +1,6 @@
 # Hermes for Teams
 
-Version **1.1.1** — bounded native-turn scheduling and a durable operator task queue
+Version **1.2.0** — native same-thread tasks, bounded turn scheduling and a durable operator task queue
 for Hermes Agent. Keep the official Hermes installation and update remote; no fork
 or replacement provider is required. Not endorsed by Nous Research.
 
@@ -9,8 +9,9 @@ or replacement provider is required. Not endorsed by Nous Research.
 **Automatic scheduling** wraps a supported Hermes native execution path. Ordinary
 requests need no `teams_submit` call. Hermes retains sender authorization, original
 input and attachments, session history, approvals, controls and reply delivery.
-Independent sessions can execute concurrently; a shared conversation retains its
-native ordering. Separate interactive/background reservations bound concurrent
+Independent sessions can execute concurrently. Opt-in same-thread task branches
+also let independent tasks overlap in one room while retaining within-task
+ordering. Separate interactive/background reservations bound concurrent
 turns, including after a timeout while the physical executor is still alive.
 
 **The explicit queue** is a separate operator feature: persistent SQLite admission,
@@ -44,6 +45,39 @@ It does not resume a shared Hermes conversation or replace native chat history.
   tested software behavior from service-capacity acceptance.
 
 ## Install
+
+### Same-thread tasks (1.2.0)
+
+On the exact tested Linux core layouts `b200f5bc60e31588ba2cb60e288029c4a54ba5fa`
+and `aab7134651366febd15d00553301c10607d1cbf4`, apply the explicit capability:
+
+```sh
+python scripts/compat.py check --capability same-thread --hermes /path/to/hermes-agent
+python scripts/compat.py apply --capability same-thread --hermes /path/to/hermes-agent --backup-dir /private/backups
+```
+
+Then opt in with `same_thread_enabled: true`, `automatic_interactive: 8` and
+`automatic_background: 2` under this plugin's settings. Preserve existing explicit
+limits until an authorized drained activation; these are reservation limits, not
+measured model throughput. “계약서 검토해 줘”, then “별도로 발표 자료도 만들어 줘”
+creates separate native tasks. Reply to a task or name its unambiguous label to
+edit/stop that task. Status/questions use a read-only snapshot, not writer authority.
+Streaming, native clarification/approval, final and recovered output identify the
+task and anchor to its original authenticated request. Non-task behavior remains
+native. See [the full contract](docs/same-thread-parallelism.md).
+
+The physical completion implementation is Linux-native. Local processes, PTYs,
+persistent kernels and direct Docker backend supervision use request-owned
+physical evidence. Other backend transports without the direct supervision
+capability fail closed/retain unknown reservations; transport JSON success is
+not completion. Kernel suspension is local process/filesystem isolation, not a
+hostile-code jail or settlement of external APIs. External writes still need
+their own authority and receipts. Existing macOS/POSIX queue support is unchanged;
+it is not certification of the new Linux same-thread execution contract.
+
+Source `ready`, saved settings, a loaded runtime and actual live user-path behavior
+are separate gates. This helper never changes credentials/models or restarts an
+owner. Root-owned/read-only images require the operator's supported image update.
 
 ```sh
 hermes --profile YOUR_PROFILE plugins install tobl-ai/hermes-for-teams --enable

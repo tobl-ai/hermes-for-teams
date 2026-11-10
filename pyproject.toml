@@ -1,7 +1,7 @@
 [project]
 name = "hermes-for-teams"
-version = "1.1.1"
-description = "Automatic native-turn scheduling and explicit queue add-on for Hermes Agent"
+version = "1.2.0"
+description = "Native same-thread task branches, physical resource leases and bounded turn scheduling for Hermes Agent"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = []

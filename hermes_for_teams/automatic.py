@@ -32,26 +32,39 @@ async def _join_physical(task):
 
 
 class AutomaticScheduler:
-    def __init__(self, interactive=2, background=1, heavy_bytes=4096, *, unknown_errors=()):
+    def __init__(self, interactive=2, background=1, heavy_bytes=4096, *, unknown_errors=(), durable_path=None):
         for value in (interactive, background, heavy_bytes):
             if type(value) is not int or value < 1:
                 raise ValueError('automatic scheduler limits must be positive integers')
         self.heavy_bytes = heavy_bytes
         self.waiting = 0
-        self._seats = {'interactive': asyncio.Semaphore(interactive),
-                       'background': asyncio.Semaphore(background)}
+        self._limits = {'interactive': interactive, 'background': background, 'question': 1}
+        self._seats = {lane: asyncio.Semaphore(limit) for lane, limit in self._limits.items()}
+        from hermes_for_teams.reservations import CapacityLedger
+        self._ledger = CapacityLedger(durable_path, self._limits) if durable_path else None
         self.active = dict.fromkeys(self._seats, 0)
         self.peak = dict.fromkeys(self._seats, 0)
         self.unknown = dict.fromkeys(self._seats, 0)
         self._unknown_errors = unknown_errors
 
     async def run(self, *, next_call, input_bytes=0, physical_completion=None, **metadata):
-        lane = 'background' if input_bytes >= self.heavy_bytes else 'interactive'
+        lane = ('question' if metadata.get('task_intent') == 'question' else
+                'background' if input_bytes >= self.heavy_bytes else 'interactive')
         # Waiting cancellation creates no work. Native unknown workers retain
         # reservations; there is intentionally no automatic release/replay.
         self.waiting += 1
+        seat = None
+        acquired = False
         try:
             await self._seats[lane].acquire()
+            acquired = True
+            if self._ledger is not None:
+                while (seat := self._ledger.acquire(lane)) is None:
+                    await asyncio.sleep(.05)
+        except BaseException:
+            if acquired:
+                self._seats[lane].release()
+            raise
         finally:
             self.waiting -= 1
         self.active[lane] += 1
@@ -70,6 +83,8 @@ class AutomaticScheduler:
                     if completed is not None and completed.cancelled():
                         self.unknown[lane] += 1
                         return
+                    if self._ledger is not None:
+                        self._ledger.release(seat)
                     self.active[lane] -= 1
                     self._seats[lane].release()
                     _log('teams_auto leave lane=%s active=%d', lane, self.active[lane])
@@ -82,14 +97,15 @@ class AutomaticScheduler:
 
 
 def register_automatic(ctx):
-    if ctx.get_config('automatic_enabled', False) is not True:
+    task_mode = ctx.get_config('same_thread_enabled', False) is True
+    if ctx.get_config('automatic_enabled', False) is not True and not task_mode:
         return
     # Refuse unsupported hosts rather than registering an inert unknown kind.
     from hermes_cli.middleware import VALID_MIDDLEWARE
     if 'gateway_turn_execution' not in VALID_MIDDLEWARE:
         raise RuntimeError('automatic scheduling requires optional gateway_turn_execution core seam')
-    limits = (ctx.get_config('automatic_interactive', 2),
-              ctx.get_config('automatic_background', 1),
+    limits = (ctx.get_config('automatic_interactive', 8 if task_mode else 2),
+              ctx.get_config('automatic_background', 2 if task_mode else 1),
               ctx.get_config('automatic_heavy_bytes', 4096))
     from gateway import turn_scheduling
     if getattr(turn_scheduling, 'COMPATIBILITY', None) == 'legacy-1fd18277':
@@ -120,6 +136,9 @@ def register_automatic(ctx):
                     raise RuntimeError('Drain native work before changing automatic capacity')
                 del registry[profile_id]
         if profile_id not in registry:
-            registry[profile_id] = (limits, AutomaticScheduler(*limits, unknown_errors=unknown_errors))
+            from hermes_constants import get_hermes_home
+            registry[profile_id] = (limits, AutomaticScheduler(
+                *limits, unknown_errors=unknown_errors,
+                durable_path=get_hermes_home() / 'teams-automatic-seats.sqlite3'))
         return await registry[profile_id][1].run(**kwargs)
     ctx.register_middleware('gateway_turn_execution', schedule)

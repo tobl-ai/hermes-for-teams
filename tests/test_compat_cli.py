@@ -41,9 +41,10 @@ def old_checkout(tmp_path, request):
     result = subprocess.run(['git', '-C', str(home), 'fetch', '--quiet', '--depth', '1',
                              'origin', *refs], check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    subprocess.run(['git', '-C', str(home), 'sparse-checkout', 'set', '--no-cone',
-                    '/gateway/run_turn.py', '/gateway/session_finite.py',
-                    '/gateway/session_runtime_workers.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
+    if base not in ('b200f5bc60e31588ba2cb60e288029c4a54ba5fa','aab7134651366febd15d00553301c10607d1cbf4'):
+        subprocess.run(['git', '-C', str(home), 'sparse-checkout', 'set', '--no-cone',
+                        '/gateway/run_turn.py', '/gateway/session_finite.py',
+                        '/gateway/session_runtime_workers.py', '/hermes_cli/middleware.py'], check=True, capture_output=True)
     subprocess.run(['git', '-C', str(home), 'checkout', '--quiet', '--detach', base], check=True)
     return home
 
@@ -120,6 +121,7 @@ def test_changed_execution_layout_refused_even_when_patch_could_apply(old_checko
     'bf0203a794a07aac3ff764972ab9087baa4e4f4e',
     'f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab',
     'b200f5bc60e31588ba2cb60e288029c4a54ba5fa',
+    'aab7134651366febd15d00553301c10607d1cbf4',
     'ed1afb082eb3e46cf2edae9d8f68fb67b09ee4df'], indirect=True)
 def test_current_submission_layout_apply_and_idempotence(old_checkout, tmp_path):
     home = old_checkout

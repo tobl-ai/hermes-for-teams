@@ -25,13 +25,37 @@ def git(home, *args):
     return subprocess.run(['git', '-C', str(home), *args], check=False, capture_output=True, text=True)
 
 
-def inspect(home):
+def inspect(home, capability='automatic'):
     home = Path(home).expanduser().resolve()
     top = git(home, 'rev-parse', '--show-toplevel')
     if top.returncode or Path(top.stdout.strip()).resolve() != home:
         raise ValueError('--hermes must identify the actual checkout root')
     head = git(home, 'rev-parse', 'HEAD').stdout.strip()
-    selected = PATCHSETS.get(head)
+    selected = None
+    capabilities = ['automatic']
+    registry = json.loads((ROOT / 'compat/registry.json').read_text())
+    if registry.get('schema') != 1:
+        raise ValueError('Unsupported packaged capability registry')
+    for layout in registry['layouts']:
+        if capability not in layout['capabilities']:
+            continue
+        matches = True
+        for path, expected in layout['blobs'].items():
+            actual = git(home,'ls-tree','HEAD','--',path)
+            fields = actual.stdout.split()
+            blob = fields[2] if fields else None
+            if actual.returncode or blob != expected:
+                matches = False
+                break
+        if matches:
+            selected = layout['patches']
+            capabilities = layout['capabilities']
+            break
+    if selected is None and capability == 'same-thread':
+        raise ValueError('Unsupported Hermes execution layout for same-thread capability: ' + head +
+                         '; no source or configuration changed')
+    if selected is None:
+        selected = PATCHSETS.get(head)
     if selected is None:
         # Permit unrelated upstream updates, but not unreviewed execution changes.
         # Compare the tracked connection modules, not a version string or merely
@@ -64,11 +88,11 @@ def inspect(home):
     patches = [str(ROOT / 'compat' / name) for name in selected]
     applied = git(home, 'apply', '--reverse', '--check', '--', *patches)
     if applied.returncode == 0:
-        return home, head, patches, 'ready'
+        return home, head, patches, 'ready', capabilities
     check = git(home, 'apply', '--check', '--', *patches)
     if check.returncode:
         raise ValueError('Patch conflicts with this working tree; refused without changes:\n' + check.stderr)
-    return home, head, patches, 'needs_patch'
+    return home, head, patches, 'needs_patch', capabilities
 
 
 def apply(home, patches, backup_dir):
@@ -115,14 +139,16 @@ def main():
     parser.add_argument('action', choices=['check', 'apply'])
     parser.add_argument('--hermes', required=True)
     parser.add_argument('--backup-dir')
+    parser.add_argument('--capability', choices=['automatic','same-thread'], default='automatic')
     args = parser.parse_args()
     try:
-        home, head, patches, status = inspect(args.hermes)
+        home, head, patches, status, capabilities = inspect(args.hermes,args.capability)
         backup = None
         if args.action == 'apply' and status == 'needs_patch':
             backup = apply(home, patches, args.backup_dir)
             status = 'ready'
         print(json.dumps({'hermes_commit': head, 'source_status': status,
+                          'capabilities': capabilities, 'requested_capability': args.capability,
                           'patches': [Path(p).name for p in patches], 'backup': backup,
                           'runtime_activated': False,
                           'note': 'Source check only; install plugin, opt in and use authorized native lifecycle separately.'}))

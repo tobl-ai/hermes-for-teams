@@ -1,1 +1,2 @@
-compat/*.patch -text eol=lf
+# Unified patches intentionally use a space-only context line for blank source.
+compat/*.patch -text eol=lf -whitespace

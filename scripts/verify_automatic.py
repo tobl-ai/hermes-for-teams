@@ -13,6 +13,7 @@ def main():
     parser.add_argument('--core', required=True)
     parser.add_argument('--scratch', required=True, help='Private internal disposable scratch directory')
     parser.add_argument('--timeout', type=float, default=120, help='Bounded offline test deadline in seconds')
+    parser.add_argument('--docker', action='store_true', help='Require actual Docker-daemon acceptance in the disposable home')
     parser.add_argument('tests', nargs='+')
     args = parser.parse_args()
     scratch = Path(args.scratch).expanduser().resolve()
@@ -26,6 +27,8 @@ def main():
                HERMES_HOME=str(root / 'state'), HERMES_TEST_SANDBOX_HOME=str(root / 'state'), TMPDIR=str(root / 'tmp'),
                PYTHONPATH=os.pathsep.join((str(Path(args.core).resolve()), str(Path(__file__).resolve().parents[1]))),
                PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1')
+    if args.docker:
+        env['HERMES_TEAMS_DOCKER_ACCEPTANCE']='1'
     command = [sys.executable, '-m', 'pytest', *args.tests, '-o', 'addopts=', '-o', 'faulthandler_timeout=30', '-q']
     output = root / 'pytest-output.txt'
     with output.open('w') as stream:
@@ -36,6 +39,7 @@ def main():
         except subprocess.TimeoutExpired:
             exit_code = 124
     (root / 'receipt.json').write_text(json.dumps({'scope': 'offline synthetic fixtures; no live provider/platform',
+                                                  'real_docker_required':args.docker,
                                                   'command': command, 'exit_code': exit_code}, indent=2))
     print(output.read_text())
     print('EVIDENCE=' + str(root))

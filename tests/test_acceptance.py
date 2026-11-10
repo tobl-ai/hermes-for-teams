@@ -100,6 +100,7 @@ def test_policy_and_storage_boundaries(tmp_path):
         Queue(link)
     public = tmp_path / 'public'
     public.mkdir(mode=0o755)
+    public.chmod(0o755)  # explicitly public even under an owner-only process umask
     with pytest.raises(PermissionError):
         Queue(public / 'queue.db')
     q.submit('t', 'p', 'c', 'm', 'work')

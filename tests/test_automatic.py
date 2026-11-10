@@ -28,7 +28,7 @@ def test_reserved_short_lane_and_fifo_context():
         assert seen == [('short', 'original')]
         gate.set()
         await h
-        assert scheduler.active == {'interactive': 0, 'background': 0}
+        assert scheduler.active == {'interactive': 0, 'background': 0, 'question': 0}
     asyncio.run(case())
 
 
@@ -67,7 +67,7 @@ def test_synthetic_100_unique_bounded():
             return i
         result = await asyncio.gather(*(scheduler.run(input_bytes=1, next_call=lambda i=i: work(i)) for i in range(100)))
         assert sorted(seen) == list(range(100)) == result
-        assert scheduler.peak == {'interactive': 2, 'background': 0}
+        assert scheduler.peak == {'interactive': 2, 'background': 0, 'question': 0}
     asyncio.run(case())
 
 

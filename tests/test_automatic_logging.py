@@ -11,5 +11,5 @@ def test_logging_failure_does_not_change_execution_or_lease(monkeypatch):
         async def native():
             return 'native-result'
         assert await scheduler.run(next_call=native) == 'native-result'
-        assert scheduler.active == {'interactive': 0, 'background': 0}
+        assert scheduler.active == {'interactive': 0, 'background': 0, 'question': 0}
     asyncio.run(case())

@@ -1,2 +1,2 @@
 """Hermes for Teams. Automatic mode requires the optional native core seam."""
-__version__ = "1.1.1"
+__version__ = "1.2.0"

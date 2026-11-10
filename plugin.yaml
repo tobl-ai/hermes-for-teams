@@ -1,8 +1,9 @@
 name: hermes-for-teams
-version: 1.1.1
+version: 1.2.0
 description: "Automatic native-turn scheduling plus explicit queue; automatic mode requires the optional Hermes core seam"
 provides_middleware:
   - gateway_turn_execution
+  - gateway_task_intent
 author: Tobl.ai
 license: MIT
 kind: standalone
@@ -15,6 +16,10 @@ provides_tools:
   - teams_cancel
   - teams_workflow
 config_schema:
+  same_thread_enabled:
+    type: bool
+    default: false
+    description: "Independent native task branches in one room; requires the same-thread capability patch and Linux physical-resource contract"
   automatic_enabled:
     type: bool
     default: false

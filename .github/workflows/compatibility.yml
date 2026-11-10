@@ -32,10 +32,56 @@ jobs:
             git -C upstream-compat update-ref "refs/compat/$rev" FETCH_HEAD
           done
           git -C upstream-compat checkout --detach f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab
+          git -C upstream-compat fetch --depth 1 origin aab7134651366febd15d00553301c10607d1cbf4
+          git -C upstream-compat update-ref refs/compat/aab7134651366febd15d00553301c10607d1cbf4 FETCH_HEAD
       - name: Check clean apply, backups, conflicts and idempotence
         env:
           HERMES_COMPAT_SOURCE: ${{ github.workspace }}/upstream-compat
-        run: python -m pytest tests/test_compat_cli.py -q -o addopts=
+        run: python -m pytest tests/test_compat_cli.py tests/test_compat_capabilities.py -q -o addopts=
+  same-thread:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        core: ['b200f5bc60e31588ba2cb60e288029c4a54ba5fa','aab7134651366febd15d00553301c10607d1cbf4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+      - name: Prepare exact official source and capability patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init upstream-tasks
+          git -C upstream-tasks remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C upstream-tasks fetch --depth 1 origin "${{ matrix.core }}"
+          git -C upstream-tasks checkout --detach FETCH_HEAD
+          uv sync --project upstream-tasks --python 3.14 --no-dev
+          python scripts/compat.py apply --capability same-thread --hermes upstream-tasks --backup-dir "$RUNNER_TEMP/compat-backups"
+      - name: Native addon, physical lifecycle, managed and delegated acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --project upstream-tasks --no-dev --with pytest --with pytest-asyncio --with pyyaml python scripts/verify_automatic.py --core upstream-tasks --scratch "$RUNNER_TEMP" --timeout 600 "$GITHUB_WORKSPACE/tests" "$GITHUB_WORKSPACE"/acceptance/*.py | tee "$RUNNER_TEMP/same-thread.txt"
+      - name: Real Docker backend must pass without skips
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull python:3.12-slim
+          docker image inspect python:3.12-slim --format '{{json .RepoDigests}}' | tee "$RUNNER_TEMP/container-image.json"
+          uv run --project upstream-tasks --no-dev --with pytest --with pytest-asyncio --with pyyaml python scripts/verify_automatic.py --core upstream-tasks --scratch "$RUNNER_TEMP" --timeout 300 --docker "$GITHUB_WORKSPACE/acceptance/container_completion.py" | tee "$RUNNER_TEMP/docker-results.txt"
+          python -c 'import pathlib,re; t=pathlib.Path("'"$RUNNER_TEMP"'/docker-results.txt").read_text(); assert "2 passed" in t and not re.search(r"[0-9]+ skipped",t),t'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: same-thread-${{ matrix.core }}
+          path: |
+            ${{ runner.temp }}/same-thread.txt
+            ${{ runner.temp }}/docker-results.txt
+            ${{ runner.temp }}/container-image.json
   native-submission:
     runs-on: ubuntu-latest
     strategy:

@@ -5,6 +5,12 @@ __pycache__/
 build/
 dist/
 .venv/
+.venv-task/
+.venv-native/
+.core-aab71346/
+.core-b200f5bc/
+.core-legacy-1fd18277/
 .env
 *.db
 *.sqlite*
+compat/candidates/
